@@ -77,7 +77,7 @@
 
     <view wx:if="{{txRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无记录</view>
 
-    <scroll-view scroll-y show-scrollbar="{{false}}" class="tx-list" wx:else>
+    <scroll-view scroll-y enhanced="{{true}}" show-scrollbar="{{false}}" class="tx-list" wx:else>
       <view class="tx-list-container">
         <view wx:for="{{txRows}}" wx:key="id" class="tx-item row-between">
           <view class="row tx-peer">
