@@ -21,7 +21,9 @@ module.exports = {
   WECHAT_APPID: String(process.env.WECHAT_APPID || ""),
   WECHAT_APPSECRET: String(process.env.WECHAT_APPSECRET || ""),
 
-  // 数据文件路径（JSON 持久化，便于快速落地；后续可替换为数据库）
-  DB_FILE: String(process.env.DB_FILE || "")
-};
+  // 旧 JSON 数据文件路径（仅用于首次迁移/兼容；不设则默认 data/db.json）
+  DB_FILE: String(process.env.DB_FILE || ""),
 
+  // SQLite 数据库文件路径（不设则默认 data/db.sqlite）
+  SQLITE_FILE: String(process.env.SQLITE_FILE || "")
+};

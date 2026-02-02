@@ -97,10 +97,8 @@ app.post("/api/auth/wechat", async (req, res) => {
   const r = await codeToOpenId(code);
   if (!r.ok) return fail(res, r.code, r.message);
 
-  await store.withLock(() => {
-    store.ensureUser(r.openId);
-    store.persist();
-  });
+  const r2 = await store.ensureUserForLogin(r.openId);
+  if (!r2.ok) return fail(res, r2.code, r2.message);
 
   const token = signToken(r.openId);
   return ok(res, { token, openId: r.openId });
@@ -115,21 +113,7 @@ app.post("/api/auth/wechat", async (req, res) => {
 app.post("/api/auth/deactivate", authMiddleware, async (req, res) => {
   const openId = req.openId;
 
-  const result = await store.withLock((db) => {
-    // 检查用户是否在房间中
-    const mapping = db.userRoom[openId];
-    if (mapping) {
-      return store.fail("IN_ROOM", "请先退出房间后再注销账号");
-    }
-
-    // 删除用户档案数据
-    if (db.users[openId]) {
-      delete db.users[openId];
-    }
-
-    store.persist();
-    return { ok: true };
-  });
+  const result = await store.deactivateUser(openId);
 
   if (!result.ok) return fail(res, result.code, result.message);
   return ok(res, { message: "注销成功" });
@@ -140,18 +124,8 @@ app.post("/api/auth/deactivate", authMiddleware, async (req, res) => {
  */
 app.get("/api/me", authMiddleware, async (req, res) => {
   const openId = req.openId;
-  const db = store._unsafeGetDb();
 
-  const user = db.users[openId] || null;
-  const mapping = db.userRoom[openId] || null;
-
-  return ok(res, {
-    openId,
-    user,
-    inRoom: !!mapping,
-    roomCode: mapping ? mapping.roomCode : "",
-    role: mapping ? mapping.role : ""
-  });
+  return ok(res, store.getMe(openId));
 });
 
 /**
@@ -170,32 +144,9 @@ app.put("/api/users/profile", authMiddleware, async (req, res) => {
   if (!displayName) return fail(res, "INVALID_DISPLAY_NAME", "昵称不能为空");
   if (displayName.length > 20) return fail(res, "INVALID_DISPLAY_NAME", "昵称过长");
 
-  await store.withLock((db) => {
-    const user = store.ensureUser(openId);
-    const now = Date.now();
-    if (nickNameWx !== null) user.nickNameWx = nickNameWx;
-    if (avatarUrlWx !== null) user.avatarUrlWx = avatarUrlWx;
-    user.displayName = displayName;
-    user.updatedAt = now;
-
-    // 若用户在房间中，尝试同步 roomMembers 的展示字段
-    const mapping = db.userRoom[openId];
-    if (mapping && mapping.roomCode) {
-      const roomCode = mapping.roomCode;
-      if (!db.roomMembers[roomCode]) db.roomMembers[roomCode] = {};
-      const m = db.roomMembers[roomCode][openId];
-      if (m) {
-        m.displayName = displayName;
-        if (avatarUrlWx !== null) m.avatarUrl = avatarUrlWx;
-        m.updatedAt = now;
-      }
-    }
-
-    store.persist();
-  });
-
-  const db2 = store._unsafeGetDb();
-  return ok(res, { user: db2.users[openId] || null });
+  const result = await store.updateUserProfile(openId, { nickNameWx, avatarUrlWx, displayName });
+  if (!result.ok) return fail(res, result.code, result.message);
+  return ok(res, { user: result.user || null });
 });
 
 /**
@@ -204,55 +155,7 @@ app.put("/api/users/profile", authMiddleware, async (req, res) => {
 app.post("/api/rooms/create", authMiddleware, async (req, res) => {
   const openId = req.openId;
 
-  const result = await store.withLock((db) => {
-    const mapping = db.userRoom[openId];
-    if (mapping) return store.fail("ALREADY_IN_ROOM", "你已在房间中，不能重复创建");
-
-    const user = store.ensureUser(openId);
-    if (!user.displayName || !user.avatarUrlWx) {
-      return store.fail("PROFILE_REQUIRED", "请先在小程序授权获取头像昵称");
-    }
-
-    let roomCode = "";
-    for (let i = 0; i < 20; i += 1) {
-      const c = store.genRoomCode();
-      if (!db.rooms[c]) {
-        roomCode = c;
-        break;
-      }
-    }
-    if (!roomCode) return store.fail("CREATE_ROOM_FAILED", "创建房间失败，请稍后重试");
-
-    const now = Date.now();
-    db.rooms[roomCode] = {
-      roomCode,
-      ownerOpenId: openId,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-      memberCount: 1,
-      totals: { [openId]: 0 },
-      lastTxAt: 0
-    };
-
-    db.userRoom[openId] = { roomCode, role: "owner", joinedAt: now };
-
-    if (!db.roomMembers[roomCode]) db.roomMembers[roomCode] = {};
-    db.roomMembers[roomCode][openId] = {
-      openId,
-      role: "owner",
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrlWx,
-      joinedAt: now,
-      active: true,
-      updatedAt: now
-    };
-
-    if (!db.roomTxs[roomCode]) db.roomTxs[roomCode] = [];
-
-    store.persist();
-    return { ok: true, roomCode };
-  });
+  const result = await store.createRoom(openId);
 
   if (!result.ok) return fail(res, result.code, result.message);
   return ok(res, { roomCode: result.roomCode });
@@ -266,50 +169,7 @@ app.post("/api/rooms/join", authMiddleware, async (req, res) => {
   const roomCode = String((req.body && req.body.roomCode) || "").trim().toUpperCase();
   if (!roomCode) return fail(res, "INVALID_ROOM_CODE", "请输入房间号");
 
-  const result = await store.withLock((db) => {
-    const mapping = db.userRoom[openId];
-    if (mapping) return store.fail("ALREADY_IN_ROOM", "加入新房间前请先退出当前房间");
-
-    const room = db.rooms[roomCode];
-    if (!room) return store.fail("ROOM_NOT_FOUND", "房间不存在");
-    if (room.status !== "active") return store.fail("ROOM_NOT_ACTIVE", "房间不可加入（可能已解散）");
-
-    const user = store.ensureUser(openId);
-    if (!user.displayName || !user.avatarUrlWx) {
-      return store.fail("PROFILE_REQUIRED", "请先在小程序授权获取头像昵称");
-    }
-
-    const now = Date.now();
-    db.userRoom[openId] = { roomCode, role: "member", joinedAt: now };
-
-    if (!db.roomMembers[roomCode]) db.roomMembers[roomCode] = {};
-    const existed = db.roomMembers[roomCode][openId];
-    const wasActive = !!(existed && existed.active);
-
-    db.roomMembers[roomCode][openId] = {
-      openId,
-      role: "member",
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrlWx,
-      joinedAt: existed ? existed.joinedAt : now,
-      active: true,
-      updatedAt: now
-    };
-
-    // 维护 memberCount=active 成员数
-    room.memberCount = store.calcActiveMemberCount(roomCode);
-    room.updatedAt = now;
-
-    // totals：首次出现则补 0，保证总账展示完整
-    if (!Object.prototype.hasOwnProperty.call(room.totals || {}, openId)) {
-      room.totals[openId] = 0;
-    }
-
-    if (!db.roomTxs[roomCode]) db.roomTxs[roomCode] = [];
-
-    store.persist();
-    return { ok: true, roomCode, wasActive };
-  });
+  const result = await store.joinRoom(openId, roomCode);
 
   if (!result.ok) return fail(res, result.code, result.message);
 
@@ -323,8 +183,7 @@ app.post("/api/rooms/join", authMiddleware, async (req, res) => {
  */
 app.get("/api/rooms/my", authMiddleware, async (req, res) => {
   const openId = req.openId;
-  const db = store._unsafeGetDb();
-  const mapping = db.userRoom[openId];
+  const mapping = store.getUserRoom(openId);
   if (!mapping) return ok(res, { inRoom: false });
   return ok(res, { inRoom: true, roomCode: mapping.roomCode, role: mapping.role });
 });
@@ -335,9 +194,8 @@ app.get("/api/rooms/my", authMiddleware, async (req, res) => {
 app.get("/api/rooms/:roomCode/snapshot", authMiddleware, async (req, res) => {
   const openId = req.openId;
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
-  const db = store._unsafeGetDb();
 
-  const mapping = db.userRoom[openId];
+  const mapping = store.getUserRoom(openId);
   if (!mapping || mapping.roomCode !== roomCode) return fail(res, "FORBIDDEN", "你不在该房间中");
 
   const snap = store.getRoomSnapshot(roomCode);
@@ -351,27 +209,7 @@ app.get("/api/rooms/:roomCode/snapshot", authMiddleware, async (req, res) => {
 app.post("/api/rooms/leave", authMiddleware, async (req, res) => {
   const openId = req.openId;
 
-  const result = await store.withLock((db) => {
-    const mapping = db.userRoom[openId];
-    if (!mapping) return store.fail("NOT_IN_ROOM", "你不在任何房间中");
-    if (mapping.role === "owner") return store.fail("OWNER_CANNOT_LEAVE", "房主不能退出，请使用解散房间");
-
-    const roomCode = mapping.roomCode;
-    const room = db.rooms[roomCode];
-    if (!room) return store.fail("ROOM_NOT_FOUND", "房间不存在");
-
-    delete db.userRoom[openId];
-    if (db.roomMembers[roomCode] && db.roomMembers[roomCode][openId]) {
-      db.roomMembers[roomCode][openId].active = false;
-      db.roomMembers[roomCode][openId].updatedAt = Date.now();
-    }
-
-    room.memberCount = store.calcActiveMemberCount(roomCode);
-    room.updatedAt = Date.now();
-
-    store.persist();
-    return { ok: true, roomCode };
-  });
+  const result = await store.leaveRoom(openId);
 
   if (!result.ok) return fail(res, result.code, result.message);
   wsHub.broadcastSnapshot(result.roomCode);
@@ -393,50 +231,7 @@ app.post("/api/txs", authMiddleware, async (req, res) => {
   if (amount <= 0) return fail(res, "INVALID_AMOUNT", "金额必须大于 0");
   if (amount > 99999999) return fail(res, "INVALID_AMOUNT", "金额过大");
 
-  const result = await store.withLock((db) => {
-    const mapping = db.userRoom[fromOpenId];
-    if (!mapping) return store.fail("NOT_IN_ROOM", "你不在房间中");
-    const roomCode = mapping.roomCode;
-
-    const room = db.rooms[roomCode];
-    if (!room) return store.fail("ROOM_NOT_FOUND", "房间不存在");
-    if (room.status !== "active") return store.fail("ROOM_NOT_ACTIVE", "房间不可记账（可能已解散）");
-
-    const membersMap = db.roomMembers[roomCode] || {};
-    const fromMember = membersMap[fromOpenId];
-    const toMember = membersMap[toOpenId];
-    if (!fromMember || !fromMember.active) return store.fail("MEMBER_INACTIVE", "你已退出房间，不能记账");
-    if (!toMember || !toMember.active) return store.fail("TO_NOT_IN_ROOM", "收款人不在房间中");
-
-    const txId = `tx_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
-    const tx = {
-      id: txId,
-      roomCode,
-      fromOpenId,
-      toOpenId,
-      amount,
-      note,
-      createdAt: Date.now(),
-      fromName: fromMember.displayName,
-      toName: toMember.displayName,
-      fromAvatar: fromMember.avatarUrl,
-      toAvatar: toMember.avatarUrl
-    };
-
-    if (!db.roomTxs[roomCode]) db.roomTxs[roomCode] = [];
-    db.roomTxs[roomCode].push(tx);
-
-    if (!room.totals) room.totals = {};
-    if (!Object.prototype.hasOwnProperty.call(room.totals, fromOpenId)) room.totals[fromOpenId] = 0;
-    if (!Object.prototype.hasOwnProperty.call(room.totals, toOpenId)) room.totals[toOpenId] = 0;
-    room.totals[fromOpenId] -= amount;
-    room.totals[toOpenId] += amount;
-    room.lastTxAt = tx.createdAt;
-    room.updatedAt = tx.createdAt;
-
-    store.persist();
-    return { ok: true, roomCode, txId };
-  });
+  const result = await store.addTx(fromOpenId, toOpenId, amount, note);
 
   if (!result.ok) return fail(res, result.code, result.message);
   wsHub.broadcastSnapshot(result.roomCode);
@@ -449,67 +244,7 @@ app.post("/api/txs", authMiddleware, async (req, res) => {
 app.post("/api/rooms/dissolve", authMiddleware, async (req, res) => {
   const openId = req.openId;
 
-  const result = await store.withLock((db) => {
-    const mapping = db.userRoom[openId];
-    if (!mapping) return store.fail("NOT_IN_ROOM", "你不在房间中");
-    if (mapping.role !== "owner") return store.fail("FORBIDDEN", "仅房主可解散房间");
-
-    const roomCode = mapping.roomCode;
-    const room = db.rooms[roomCode];
-    if (!room) return store.fail("ROOM_NOT_FOUND", "房间不存在");
-
-    const membersMap = db.roomMembers[roomCode] || {};
-    const members = Object.values(membersMap);
-    const totals = { ...(room.totals || {}) };
-
-    // 结算覆盖所有成员（含已退出成员），缺失补 0
-    for (const m of members) {
-      if (!Object.prototype.hasOwnProperty.call(totals, m.openId)) totals[m.openId] = 0;
-    }
-
-    const membersSnapshot = members
-      .slice()
-      .sort((a, b) => {
-        if (a.role === "owner" && b.role !== "owner") return -1;
-        if (b.role === "owner" && a.role !== "owner") return 1;
-        return Number(a.joinedAt || 0) - Number(b.joinedAt || 0);
-      })
-      .map((m) => ({
-        openId: m.openId,
-        displayName: m.displayName,
-        avatarUrl: m.avatarUrl,
-        role: m.role,
-        active: !!m.active
-      }));
-
-    const txCount = (db.roomTxs[roomCode] || []).length;
-    const dissolvedAt = Date.now();
-
-    db.settlements[roomCode] = {
-      roomCode,
-      ownerOpenId: openId,
-      totals,
-      membersSnapshot,
-      txCount,
-      dissolvedAt
-    };
-
-    // 广播解散（先广播后清理，客户端能及时收到）
-    // 注意：此时 room 仍存在，WS 收到解散消息后会自行跳转
-
-    // 清理房间数据
-    delete db.rooms[roomCode];
-    delete db.roomMembers[roomCode];
-    delete db.roomTxs[roomCode];
-
-    // 释放一人一房映射：清理仍在该房间的映射
-    for (const [oid, m] of Object.entries(db.userRoom)) {
-      if (m && m.roomCode === roomCode) delete db.userRoom[oid];
-    }
-
-    store.persist();
-    return { ok: true, roomCode, settlementId: roomCode };
-  });
+  const result = await store.dissolveRoom(openId);
 
   if (!result.ok) return fail(res, result.code, result.message);
   wsHub.broadcastDissolved(result.roomCode, result.settlementId);
@@ -523,11 +258,9 @@ app.get("/api/settlements/:roomCode", authMiddleware, async (req, res) => {
   const openId = req.openId;
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
 
-  const db = store._unsafeGetDb();
-  const s = db.settlements[roomCode];
-  if (!s) return fail(res, "NOT_FOUND", "结算不存在");
-  if (s.ownerOpenId !== openId) return fail(res, "FORBIDDEN", "仅房主可查看结算");
-  return ok(res, { settlement: s });
+  const r = store.getSettlement(openId, roomCode);
+  if (!r.ok) return fail(res, r.code, r.message);
+  return ok(res, { settlement: r.settlement });
 });
 
 /**

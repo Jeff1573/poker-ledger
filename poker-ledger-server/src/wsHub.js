@@ -83,8 +83,7 @@ function createWsHub({ wss, store }) {
         }
 
         // 校验：用户必须在该房间中
-        const db = store._unsafeGetDb();
-        const mapping = db.userRoom[openId];
+        const mapping = store.getUserRoom(openId);
         if (!mapping || mapping.roomCode !== roomCode) {
           ws.send(JSON.stringify({ type: "error", code: "FORBIDDEN", message: "你不在该房间中" }));
           return;
@@ -121,4 +120,3 @@ function createWsHub({ wss, store }) {
 }
 
 module.exports = { createWsHub };
-
