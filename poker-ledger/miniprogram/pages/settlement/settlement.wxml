@@ -1,0 +1,37 @@
+<view class="container">
+  <view class="card">
+    <view class="title">本次结算</view>
+    <view class="subtle" style="margin-top: 10rpx;">
+      房间 {{roomCode}} · 交易 {{txCount}} 笔 · 解散于 {{dissolvedAtText}}
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="title">成员输赢</view>
+
+    <view wx:if="{{rows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无数据</view>
+
+    <view wx:else style="margin-top: 18rpx;">
+      <view wx:for="{{rows}}" wx:key="openId" class="row-between item-row">
+        <view class="row">
+          <image class="avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+          <view class="name-wrap">
+            <view class="name">
+              {{item.displayName}}
+              <text wx:if="{{item.role === 'owner'}}" class="badge">房主</text>
+            </view>
+            <view class="subtle" wx:if="{{item.active === false}}">已退出</view>
+          </view>
+        </view>
+
+        <view class="amount {{item.amount > 0 ? 'plus' : (item.amount < 0 ? 'minus' : 'zero')}}">
+          {{item.amountText}}
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <button class="btn-primary" bindtap="goHome">返回首页</button>
+  </view>
+</view>

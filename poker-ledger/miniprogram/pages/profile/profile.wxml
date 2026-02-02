@@ -1,0 +1,37 @@
+<view class="container">
+  <view class="card">
+    <view class="title">我的资料</view>
+    <view class="subtle" style="margin-top: 10rpx;">默认使用微信头像昵称，可修改展示昵称</view>
+
+    <view wx:if="{{hasProfile}}" class="row profile-row" style="margin-top: 22rpx;">
+      <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
+      <view style="margin-left: 18rpx;">
+        <view class="name">{{user.displayName}}</view>
+        <view class="subtle">微信昵称：{{user.nickNameWx}}</view>
+      </view>
+    </view>
+
+    <view wx:else class="row-between" style="margin-top: 22rpx;">
+      <view>
+        <view class="name">尚未授权</view>
+        <view class="subtle">请先授权获取头像昵称</view>
+      </view>
+      <button class="btn-primary" bindtap="handleAuth" disabled="{{loading}}">去授权</button>
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{hasProfile}}">
+    <view class="title">修改昵称</view>
+    <input
+      class="input"
+      placeholder="请输入新昵称"
+      value="{{displayNameInput}}"
+      bindinput="handleDisplayNameInput"
+      maxlength="20"
+      style="margin-top: 18rpx;"
+    />
+    <button class="btn-primary" style="margin-top: 18rpx;" bindtap="handleSave" disabled="{{loading}}">
+      保存
+    </button>
+  </view>
+</view>

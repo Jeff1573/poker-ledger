@@ -1,0 +1,40 @@
+.profile-card {
+  padding-bottom: 28rpx;
+}
+
+.profile-row {
+  align-items: center;
+}
+
+.avatar {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 48rpx;
+  background: #E5E5EA;
+}
+
+.auth-row {
+  align-items: center;
+}
+
+.auth-btn {
+  margin-left: 14rpx;
+}
+
+.name {
+  font-size: 34rpx;
+  font-weight: 600;
+}
+
+.join-row {
+  align-items: center;
+}
+
+.join-input {
+  flex: 1;
+}
+
+.join-btn {
+  margin-left: 14rpx;
+  width: 176rpx;
+}

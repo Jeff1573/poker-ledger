@@ -1,0 +1,176 @@
+.action-row button {
+  height: 76rpx;
+  line-height: 76rpx;
+}
+
+.member-scroll {
+  white-space: nowrap;
+}
+
+.member-list {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.member-item {
+  width: 140rpx;
+  margin-right: 18rpx;
+  position: relative;
+}
+
+.member-avatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 60rpx;
+  background: #E5E5EA;
+}
+
+.member-name {
+  margin-top: 10rpx;
+  font-size: 26rpx;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.inactive {
+  opacity: 0.55;
+}
+
+.badge {
+  position: absolute;
+  top: -10rpx;
+  right: 0;
+  padding: 4rpx 10rpx;
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  background: rgba(0, 122, 255, 0.12);
+  color: #007AFF;
+}
+
+.badge-gray {
+  background: rgba(142, 142, 147, 0.18);
+  color: #8E8E93;
+}
+
+.total-row {
+  padding: 14rpx 0;
+  border-bottom: 2rpx solid rgba(60, 60, 67, 0.12);
+}
+
+.total-row:last-child {
+  border-bottom: none;
+}
+
+.total-avatar {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 28rpx;
+  background: #E5E5EA;
+}
+
+.total-name {
+  margin-left: 14rpx;
+  font-size: 30rpx;
+}
+
+.total-amount {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.plus {
+  color: #34C759;
+}
+
+.minus {
+  color: #FF3B30;
+}
+
+.zero {
+  color: #8E8E93;
+}
+
+.tx-item {
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid rgba(60, 60, 67, 0.12);
+}
+
+.tx-item:last-child {
+  border-bottom: none;
+}
+
+.tx-peer {
+  flex: 1;
+  min-width: 0;
+}
+
+.tx-avatar {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 28rpx;
+  background: #E5E5EA;
+}
+
+.tx-body {
+  margin-left: 14rpx;
+  min-width: 0;
+}
+
+.tx-main {
+  font-size: 30rpx;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tx-amount {
+  margin-left: 18rpx;
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #1C1C1E;
+}
+
+.tx-income {
+  color: #FF3B30;
+}
+
+.tx-expense {
+  color: #34C759;
+}
+
+.transfer-name {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+/* 入房码弹层 */
+.overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28rpx;
+}
+
+.overlay-card {
+  width: 100%;
+  max-width: 640rpx;
+  background: #FFFFFF;
+  border-radius: 24rpx;
+  padding: 24rpx;
+}
+
+.qrcode {
+  width: 100%;
+  height: 540rpx;
+  margin-top: 18rpx;
+  background: #F2F2F7;
+  border-radius: 18rpx;
+}

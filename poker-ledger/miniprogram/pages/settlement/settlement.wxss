@@ -1,0 +1,51 @@
+.item-row {
+  padding: 16rpx 0;
+  border-bottom: 2rpx solid rgba(60, 60, 67, 0.12);
+}
+
+.item-row:last-child {
+  border-bottom: none;
+}
+
+.avatar {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 32rpx;
+  background: #E5E5EA;
+}
+
+.name-wrap {
+  margin-left: 14rpx;
+}
+
+.name {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 10rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  background: rgba(0, 122, 255, 0.12);
+  color: #007AFF;
+}
+
+.amount {
+  font-size: 34rpx;
+  font-weight: 700;
+}
+
+.plus {
+  color: #34C759;
+}
+
+.minus {
+  color: #FF3B30;
+}
+
+.zero {
+  color: #8E8E93;
+}

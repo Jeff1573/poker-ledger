@@ -1,0 +1,157 @@
+<view class="container">
+  <view class="card">
+    <view class="row-between">
+      <view>
+        <view class="title">房间 {{roomCode}}</view>
+        <view class="subtle" style="margin-top: 10rpx;">角色：{{roleText}}</view>
+      </view>
+      <button class="btn-plain" size="mini" bindtap="copyRoomCode">复制</button>
+    </view>
+
+    <view class="row action-row" style="margin-top: 18rpx;">
+      <button
+        wx:if="{{role === 'owner'}}"
+        class="btn-plain"
+        style="flex: 1;"
+        bindtap="handleShowJoinCode"
+        disabled="{{loading}}"
+      >
+        入房码
+      </button>
+      <button
+        wx:if="{{role === 'owner'}}"
+        class="btn-danger"
+        style="flex: 1; margin-left: 14rpx;"
+        bindtap="handleDissolve"
+        disabled="{{loading}}"
+      >
+        解散房间
+      </button>
+
+      <button
+        wx:else
+        class="btn-danger"
+        style="flex: 1;"
+        bindtap="handleLeave"
+        disabled="{{loading}}"
+      >
+        退出房间
+      </button>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="row-between">
+      <view class="title">成员</view>
+      <view class="subtle">{{members.length}} 人</view>
+    </view>
+    <view class="subtle" style="margin-top: 10rpx;">点击成员头像进行转账记账</view>
+
+    <scroll-view scroll-x class="member-scroll" style="margin-top: 18rpx;">
+      <view class="member-list">
+        <view
+          wx:for="{{members}}"
+          wx:key="openId"
+          class="member-item {{item.role === 'owner' ? 'owner' : ''}} {{!item.active ? 'inactive' : ''}}"
+          bindtap="handleTapMember"
+          data-openid="{{item.openId}}"
+        >
+          <image class="member-avatar" src="{{item.avatarUrlResolved}}" mode="aspectFill" />
+          <view class="member-name">{{item.displayName}}</view>
+          <view wx:if="{{item.role === 'owner'}}" class="badge">房主</view>
+          <view wx:if="{{!item.active}}" class="badge badge-gray">已退出</view>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <view class="card">
+    <view class="row-between">
+      <view class="title">总账</view>
+      <view class="subtle">净输赢（收到-付出）</view>
+    </view>
+
+    <view wx:if="{{totalsRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无数据</view>
+
+    <view wx:else style="margin-top: 18rpx;">
+      <view wx:for="{{totalsRows}}" wx:key="openId" class="total-row row-between">
+        <view class="row">
+          <image class="total-avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+          <view class="total-name">{{item.displayName}}</view>
+        </view>
+        <view class="total-amount {{item.amount > 0 ? 'plus' : (item.amount < 0 ? 'minus' : 'zero')}}">
+          {{item.amountText}}
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="row-between">
+      <view class="title">交易记录</view>
+      <view class="subtle">{{txRows.length}} 笔（与我相关 · 最近 200 笔）</view>
+    </view>
+
+    <view wx:if="{{txRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无记录</view>
+
+    <view wx:else style="margin-top: 18rpx;">
+      <view wx:for="{{txRows}}" wx:key="id" class="tx-item row-between">
+        <view class="row tx-peer">
+          <image class="tx-avatar" src="{{item.peerAvatarUrl}}" mode="aspectFill" />
+          <view class="tx-body">
+            <view class="tx-main">{{item.peerName}}</view>
+            <view class="subtle">{{item.timeText}}</view>
+          </view>
+        </view>
+        <view class="tx-amount {{item.amountClass}}">{{item.amountText}}</view>
+      </view>
+    </view>
+  </view>
+</view>
+
+<!-- 入房码弹层 -->
+<view wx:if="{{showJoinCode}}" class="overlay" bindtap="closeJoinCode">
+  <view class="overlay-card" catchtap="noop">
+    <view class="title">扫码加入</view>
+    <image class="qrcode" src="{{joinCodeUrl}}" mode="aspectFit" />
+    <button class="btn-primary" style="margin-top: 16rpx;" bindtap="closeJoinCode">关闭</button>
+  </view>
+</view>
+
+<!-- 转账弹层 -->
+<view wx:if="{{showTransferModal}}" class="overlay" bindtap="closeTransferModal">
+  <view class="overlay-card" catchtap="noop">
+    <view class="title">转账</view>
+
+    <view class="row" style="margin-top: 18rpx;">
+      <image class="tx-avatar" src="{{transferToAvatarUrl}}" mode="aspectFill" />
+      <view style="margin-left: 14rpx;">
+        <view class="transfer-name">转给 {{transferToName}}</view>
+        <view class="subtle">金额仅支持整数</view>
+      </view>
+    </view>
+
+    <input
+      class="input"
+      type="number"
+      placeholder="请输入金额"
+      value="{{transferAmountText}}"
+      bindinput="handleTransferAmountInput"
+      maxlength="9"
+      style="margin-top: 18rpx;"
+      focus="{{showTransferModal}}"
+    />
+
+    <view class="row-between" style="margin-top: 18rpx;">
+      <button class="btn-plain" style="flex: 1;" bindtap="closeTransferModal" disabled="{{loading}}">取消</button>
+      <button
+        class="btn-primary"
+        style="flex: 1; margin-left: 14rpx;"
+        bindtap="confirmTransfer"
+        disabled="{{loading || !transferCanSubmit}}"
+      >
+        确认
+      </button>
+    </view>
+  </view>
+</view>

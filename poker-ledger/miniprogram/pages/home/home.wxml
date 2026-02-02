@@ -1,0 +1,83 @@
+<view class="container">
+  <!-- 授权登录  -->
+  <view class="card profile-card">
+    <view class="row-between">
+      <view>
+        <view class="title">打牌记账</view>
+        <view class="subtle" style="margin-top: 10rpx;">房主创建房间，成员可输入房间号或扫码加入</view>
+      </view>
+
+      <view style="display: flex; flex-direction: column; gap: 10rpx;">
+        <button class="btn-plain" size="mini" bindtap="goProfile">资料</button>
+      </view>
+    </view>
+
+    <view style="margin-top: 22rpx;">
+      <view wx:if="{{hasProfile}}" class="row profile-row">
+        <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
+        <view style="margin-left: 18rpx;">
+          <view class="name">{{user.displayName}}</view>
+          <view class="subtle">默认微信头像昵称，可在“资料”里改昵称</view>
+        </view>
+      </view>
+
+      <view wx:else>
+        <!-- 推荐方案：chooseAvatar + nickname（均需用户主动操作/输入） -->
+        <view wx:if="{{supportChooseAvatar}}">
+          <view class="subtle">请选择头像并输入昵称（用于房间内展示）</view>
+
+          <view class="row auth-row" style="margin-top: 18rpx;">
+            <image class="avatar" src="{{draftAvatarLocal}}" mode="aspectFill" />
+            <button  class="btn-plain auth-btn" open-type="chooseAvatar" bindchooseavatar="handleChooseAvatar" disabled="{{loading}}">
+              选择头像
+            </button>
+          </view>
+
+          <input class="input" type="nickname" placeholder="请输入昵称" value="{{draftDisplayName}}" bindinput="handleNicknameInput" maxlength="20" style="margin-top: 14rpx;" />
+
+          <button class="btn-primary" style="margin-top: 14rpx;" bindtap="handleSaveProfile" disabled="{{!canSaveProfile || loading}}">
+            登录
+          </button>
+        </view>
+
+        <!-- 兼容兜底：老版本不支持 chooseAvatar 时回退到 getUserProfile（仍需按钮点击触发） -->
+        <view wx:else class="row-between">
+          <view>
+            <view class="name">需要授权</view>
+            <view class="subtle">用于显示房间成员头像和昵称</view>
+          </view>
+          <button class="btn-primary" bindtap="handleAuthLegacy" disabled="{{loading}}">授权获取</button>
+        </view>
+      </view>
+    </view>
+  </view>
+  <!-- 房间创建/加入 -->
+  <view class="card" wx:if="{{hasProfile}}">
+    <view class="title">房间</view>
+
+    <view class="row" style="margin-top: 18rpx;">
+      <button class="btn-primary" style="flex: 1;" bindtap="handleCreateRoom" disabled="{{!hasProfile || loading}}">
+        创建房间（房主）
+      </button>
+    </view>
+
+    <view class="row join-row" style="margin-top: 18rpx;">
+      <input class="input join-input" placeholder="输入房间号" value="{{roomCodeInput}}" bindinput="handleRoomCodeInput" maxlength="12" />
+      <button class="btn-primary join-btn" bindtap="handleJoinRoom" disabled="{{!hasProfile || loading}}">
+        加入
+      </button>
+    </view>
+
+    <view class="row" style="margin-top: 18rpx;">
+      <button class="btn-plain" style="flex: 1;" bindtap="handleScanJoin" disabled="{{!hasProfile || loading}}">
+        扫码加入
+      </button>
+    </view>
+
+    <view class="subtle" style="margin-top: 16rpx;">
+      规则：每个成员/房主只能在一个房间中；加入新房间前需先退出当前房间。
+    </view>
+  </view>
+  <!-- 注销 -->
+  <button wx:if="{{hasProfile}}" class="btn-danger" size="mini" bindtap="handleLogout">注销</button>
+</view>
