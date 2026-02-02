@@ -44,7 +44,7 @@
   <view class="card">
     <view class="row-between">
       <view class="title">成员</view>
-      <view class="subtle">{{members.length}} 人</view>
+      <view class="subtle member-count">{{members.length}} 人</view>
     </view>
     <view class="subtle" style="margin-top: 10rpx;">点击成员头像进行转账记账</view>
 
