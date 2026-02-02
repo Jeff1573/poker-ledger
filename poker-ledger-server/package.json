@@ -1,0 +1,20 @@
+{
+  "name": "poker-ledger-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "打牌记账小程序后端（Node.js + WebSocket）",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.17.1"
+  }
+}
