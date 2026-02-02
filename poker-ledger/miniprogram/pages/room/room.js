@@ -358,39 +358,27 @@ Page({
   },
 
   /**
-   * 根据当前用户视角生成交易列表：
-   * - 只显示「与我相关」的交易
-   * - 左侧显示对方头像+昵称
-   * - 右侧显示金额：收入为 +（红色），支出为 -（绿色）
+   * 生成全部交易列表
+   * - 显示：转账者 → 接收者，金额
    */
   rebuildTxRows() {
-    const me = String(this.data.meOpenId || "");
     const txs = this.data.txs || [];
 
     const rows = [];
     for (const t of txs) {
       if (!t) continue;
-      const fromOpenId = String(t.fromOpenId || "");
-      const toOpenId = String(t.toOpenId || "");
-      if (fromOpenId !== me && toOpenId !== me) continue;
 
-      const isIncome = toOpenId === me;
-      const peerOpenId = isIncome ? fromOpenId : toOpenId;
-      const peerName = isIncome ? t.fromName : t.toName;
-      const peerAvatarUrl = isIncome ? t.fromAvatarResolved : t.toAvatarResolved;
-
-      const rawAmount = Number(t.amount || 0);
-      const signedAmount = isIncome ? rawAmount : -rawAmount;
+      const amount = Number(t.amount || 0);
 
       rows.push({
         id: t.id,
-        peerOpenId,
-        peerName: String(peerName || "成员"),
-        peerAvatarUrl: resolveApiAssetUrl(peerAvatarUrl),
+        fromName: String(t.fromName || "成员"),
+        toName: String(t.toName || "成员"),
         timeText: String(t.timeText || ""),
-        amount: signedAmount,
-        amountText: signedAmount > 0 ? `+${signedAmount}` : String(signedAmount),
-        amountClass: signedAmount > 0 ? "tx-income" : "tx-expense"
+        amount: amount,
+        amountText: String(amount),
+        fromAvatarResolved: String(t.fromAvatarResolved || ""),
+        toAvatarResolved: String(t.toAvatarResolved || "")
       });
     }
 

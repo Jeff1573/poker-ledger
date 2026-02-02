@@ -156,8 +156,10 @@ page {
 }
 
 .tx-item {
-  padding: 16rpx 0;
+  padding: 20rpx 0;
   border-bottom: 2rpx solid rgba(60, 60, 67, 0.12);
+  display: flex;
+  align-items: center;
 }
 
 .tx-item:last-child {
@@ -169,31 +171,46 @@ page {
   min-width: 0;
 }
 
-.tx-avatar {
-  width: 56rpx;
-  height: 56rpx;
-  border-radius: 28rpx;
-  background: #E5E5EA;
-}
-
 .tx-body {
-  margin-left: 14rpx;
+  flex: 1;
   min-width: 0;
 }
 
 .tx-main {
-  font-size: 30rpx;
+  font-size: 32rpx;
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: #1C1C1E;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  margin-bottom: 6rpx;
+}
+
+.tx-inline-avatar {
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 22rpx;
+  background: #E5E5EA;
+  flex-shrink: 0;
+  margin-right: 8rpx;
+}
+
+.tx-name {
+  flex-shrink: 0;
+}
+
+.tx-arrow {
+  color: #8E8E93;
+  margin: 0 8rpx;
+  flex-shrink: 0;
 }
 
 .tx-amount {
-  margin-left: 18rpx;
-  font-size: 34rpx;
+  margin-left: 24rpx;
+  font-size: 38rpx;
   font-weight: 700;
-  color: #1C1C1E;
+  color: #FF3B30;
+  flex-shrink: 0;
 }
 
 .tx-income {
