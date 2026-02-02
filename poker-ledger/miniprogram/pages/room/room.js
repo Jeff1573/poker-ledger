@@ -157,6 +157,7 @@ Page({
         txs
       },
       () => {
+        this.enrichMembersWithAmount();
         this.rebuildTotalsRows();
         this.rebuildTxRows();
       }
@@ -292,6 +293,27 @@ Page({
 
       this.startSocket();
     }, delay);
+  },
+
+  /**
+   * 为成员数组附加净输赢金额数据
+   */
+  enrichMembersWithAmount() {
+    const room = this.data.room || {};
+    const totals = (room && room.totals) || {};
+    const members = this.data.members || [];
+
+    const enrichedMembers = members.map(m => {
+      const amountRaw = totals && totals[m.openId];
+      const amount = Number.isInteger(amountRaw) ? amountRaw : Number(amountRaw || 0);
+      return {
+        ...m,
+        amount,
+        amountText: amount > 0 ? `+${amount}` : String(amount)
+      };
+    });
+
+    this.setData({ members: enrichedMembers });
   },
 
   rebuildTotalsRows() {
