@@ -1,0 +1,23 @@
+{
+    # 全局配置
+    email admin@example.com  # 用于 Let's Encrypt 证书通知
+}
+
+# 替换为你的域名
+your-domain.com {
+    # 反向代理到应用服务器
+    reverse_proxy app:3000 {
+        # WebSocket 支持
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # 日志
+    log {
+        output file /data/access.log
+        format json
+    }
+
+    # HTTPS 自动配置(Caddy 自动处理)
+}

@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # Caddy 反向代理 + HTTPS 证书管理
+  caddy:
+    image: caddy:2-alpine
+    container_name: poker-ledger-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Caddyfile 配置
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      # 证书持久化(自动续期)
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - poker-ledger-net
+    depends_on:
+      - app
+
+  # 应用服务器
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: poker-ledger-app
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      # 数据持久化
+      - app_data:/app/data
+    networks:
+      - poker-ledger-net
+    # 仅内部网络访问,不对外暴露端口
+    expose:
+      - "3000"
+
+networks:
+  poker-ledger-net:
+    driver: bridge
+
+volumes:
+  # Caddy 数据(证书等)
+  caddy_data:
+  caddy_config:
+  # 应用数据(数据库+上传文件)
+  app_data:
