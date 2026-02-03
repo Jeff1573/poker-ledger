@@ -234,7 +234,14 @@ app.post("/api/txs", authMiddleware, async (req, res) => {
   const result = await store.addTx(fromOpenId, toOpenId, amount, note);
 
   if (!result.ok) return fail(res, result.code, result.message);
-  wsHub.broadcastSnapshot(result.roomCode);
+
+  // 增量推送：如果返回了完整交易对象和总账，则推送增量更新；否则兜底推送完整快照
+  if (result.tx && result.totals) {
+    wsHub.broadcastTxAdded(result.roomCode, result.tx, result.totals);
+  } else {
+    wsHub.broadcastSnapshot(result.roomCode);
+  }
+
   return ok(res, { txId: result.txId });
 });
 

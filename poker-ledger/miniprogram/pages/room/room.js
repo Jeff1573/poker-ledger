@@ -247,6 +247,12 @@ Page({
     }
     if (!data || !data.type) return;
 
+    // 增量推送：新增交易
+    if (data.type === "tx_added") {
+      this.handleTxAdded(data.tx, data.totals);
+      return;
+    }
+
     if (data.type === "room_snapshot") {
       this.applySnapshot(data);
       return;
@@ -264,6 +270,48 @@ Page({
         wx.redirectTo({ url: "/pages/home/home" });
       }
     }
+  },
+
+  /**
+   * 处理增量推送的新交易
+   *
+   * @param {object} tx - 新交易对象
+   * @param {object} totals - 更新后的总账
+   */
+  handleTxAdded(tx, totals) {
+    if (!tx || !totals) return;
+
+    // 1. 格式化新交易（与 applySnapshot 中的处理保持一致）
+    const newTx = {
+      ...tx,
+      timeText: formatTime(tx.createdAt),
+      fromAvatarResolved: resolveApiAssetUrl(tx && tx.fromAvatar),
+      toAvatarResolved: resolveApiAssetUrl(tx && tx.toAvatar)
+    };
+
+    // 2. 将新交易插入到列表开头
+    const txs = [newTx, ...(this.data.txs || [])];
+
+    // 3. 更新房间总账
+    const room = this.data.room || {};
+    const updatedRoom = {
+      ...room,
+      totals,
+      lastTxAt: tx.createdAt
+    };
+
+    // 4. 批量更新数据
+    this.setData(
+      {
+        room: updatedRoom,
+        txs
+      },
+      () => {
+        this.enrichMembersWithAmount();
+        this.rebuildTotalsRows();
+        this.rebuildTxRows();
+      }
+    );
   },
 
   /**

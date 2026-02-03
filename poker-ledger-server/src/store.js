@@ -567,7 +567,30 @@ function addTx(fromOpenId, toOpenId, amount, note) {
       stmt.addRoomTotal.run(amt, rc, toOid);
 
       stmt.updateRoomLastTx.run(createdAt, createdAt, rc);
-      return { ok: true, roomCode: rc, txId };
+
+      // 读取更新后的总账，用于增量推送
+      const totalsRows = stmt.listRoomTotals.all(rc);
+      const totals = {};
+      for (const r of totalsRows) {
+        totals[String(r.openId || "")] = Number(r.total || 0);
+      }
+
+      // 构造完整交易对象，用于增量推送
+      const tx = {
+        id: txId,
+        roomCode: rc,
+        fromOpenId: fromOid,
+        toOpenId: toOid,
+        amount: amt,
+        note: note2,
+        createdAt,
+        fromName: String(fromMember.displayName || ""),
+        toName: String(toMember.displayName || ""),
+        fromAvatar: String(fromMember.avatarUrl || ""),
+        toAvatar: String(toMember.avatarUrl || "")
+      };
+
+      return { ok: true, roomCode: rc, txId, tx, totals };
     });
 
     return tx();

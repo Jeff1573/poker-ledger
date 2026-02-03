@@ -40,6 +40,17 @@ function createWsHub({ wss, store }) {
   }
 
   /**
+   * 广播新增交易（增量推送）。
+   *
+   * @param {string} roomCode - 房间号
+   * @param {object} tx - 完整交易对象
+   * @param {object} totals - 更新后的总账 { openId: total, ... }
+   */
+  function broadcastTxAdded(roomCode, tx, totals) {
+    broadcast(roomCode, { type: "tx_added", tx, totals });
+  }
+
+  /**
    * 房间解散广播。
    *
    * @param {string} roomCode
@@ -115,6 +126,7 @@ function createWsHub({ wss, store }) {
 
   return {
     broadcastSnapshot,
+    broadcastTxAdded,
     broadcastDissolved
   };
 }
