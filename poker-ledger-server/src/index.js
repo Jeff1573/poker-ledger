@@ -146,6 +146,13 @@ app.put("/api/users/profile", authMiddleware, async (req, res) => {
 
   const result = await store.updateUserProfile(openId, { nickNameWx, avatarUrlWx, displayName });
   if (!result.ok) return fail(res, result.code, result.message);
+
+  // 如果用户在房间中,广播完整快照以同步成员资料更新
+  const mapping = store.getUserRoom(openId);
+  if (mapping && mapping.roomCode) {
+    wsHub.broadcastSnapshot(mapping.roomCode);
+  }
+
   return ok(res, { user: result.user || null });
 });
 

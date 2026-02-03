@@ -289,8 +289,8 @@ Page({
       toAvatarResolved: resolveApiAssetUrl(tx && tx.toAvatar)
     };
 
-    // 2. 将新交易插入到列表开头
-    const txs = [newTx, ...(this.data.txs || [])];
+    // 2. 将新交易插入到列表开头，并限制在 200 条以内（与后端一致）
+    const txs = [newTx, ...(this.data.txs || [])].slice(0, 200);
 
     // 3. 更新房间总账
     const room = this.data.room || {};
