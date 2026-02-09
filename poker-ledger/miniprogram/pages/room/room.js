@@ -2,6 +2,7 @@ const CONST = require("../../utils/const");
 const { toUnsignedIntText, validateAmount } = require("../../utils/validator");
 const { formatTime } = require("../../utils/format");
 const { resolveApiAssetUrl } = require("../../utils/url");
+const storage = require("../../utils/storage");
 
 /**
  * 房间页职责：
@@ -16,7 +17,6 @@ Page({
     loading: false,
 
     roomCode: "",
-    fromCreate: false,
     showShareGuide: false,
     ownerGuideShown: false,
     role: "",
@@ -44,13 +44,12 @@ Page({
 
   onLoad(options) {
     const roomCode = String((options && options.code) || "").trim().toUpperCase();
-    const fromCreate = String((options && options.from) || "").trim().toLowerCase() === "create";
     if (!roomCode) {
       wx.showToast({ title: "缺少房间号", icon: "none" });
       wx.redirectTo({ url: "/pages/home/home" });
       return;
     }
-    this.setData({ roomCode, fromCreate });
+    this.setData({ roomCode });
   },
 
   onShow() {
@@ -111,8 +110,11 @@ Page({
       }
 
       const roleText = myRoom.role === "owner" ? "房主" : "成员";
+      // 引导弹层只允许“创建后首次进入房间”展示一次，避免重进小程序重复弹出。
       const shouldShowShareGuide =
-        myRoom.role === "owner" && this.data.fromCreate && !this.data.ownerGuideShown;
+        myRoom.role === "owner" &&
+        !this.data.ownerGuideShown &&
+        storage.consumePendingOwnerShareGuideRoom(this.data.roomCode);
 
       this.setData({
         role: myRoom.role,

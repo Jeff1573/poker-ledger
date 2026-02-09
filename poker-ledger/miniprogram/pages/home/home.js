@@ -365,7 +365,10 @@ Page({
         return;
       }
 
-      wx.redirectTo({ url: `/pages/room/room?code=${r.roomCode}&from=create` });
+      const roomCode = String(r.roomCode || "").trim().toUpperCase();
+      // 写入一次性“房主分享引导”标记：仅在创建后首次进入房间时展示。
+      storage.setPendingOwnerShareGuideRoom(roomCode);
+      wx.redirectTo({ url: `/pages/room/room?code=${roomCode}` });
     } catch (err) {
       console.error("创建房间失败", err);
       this.toast("创建失败，请稍后重试");

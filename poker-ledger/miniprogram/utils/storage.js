@@ -7,6 +7,7 @@
 const KEY_LAST_ROOM_CODE = "PL_LAST_ROOM_CODE";
 const KEY_TOKEN = "PL_TOKEN";
 const KEY_OPEN_ID = "PL_OPEN_ID";
+const KEY_PENDING_OWNER_SHARE_GUIDE_ROOM = "PL_PENDING_OWNER_SHARE_GUIDE_ROOM";
 
 function setLastRoomCode(code) {
   try {
@@ -56,11 +57,51 @@ function getOpenId() {
   }
 }
 
+/**
+ * 记录“房主首次分享引导”待展示的房间号。
+ * 设计为一次性标记：由 room 页读取后立即清除，避免重进小程序重复弹出。
+ *
+ * @param {string} roomCode
+ */
+function setPendingOwnerShareGuideRoom(roomCode) {
+  const code = String(roomCode || "").trim().toUpperCase();
+  try {
+    wx.setStorageSync(KEY_PENDING_OWNER_SHARE_GUIDE_ROOM, code);
+  } catch (err) {
+    // 忽略本地存储失败
+  }
+}
+
+/**
+ * 消费“房主首次分享引导”标记。
+ * 仅当当前 roomCode 与标记一致时返回 true，并清除标记。
+ *
+ * @param {string} roomCode
+ * @returns {boolean}
+ */
+function consumePendingOwnerShareGuideRoom(roomCode) {
+  const code = String(roomCode || "").trim().toUpperCase();
+  if (!code) return false;
+
+  try {
+    const pending = String(wx.getStorageSync(KEY_PENDING_OWNER_SHARE_GUIDE_ROOM) || "")
+      .trim()
+      .toUpperCase();
+    if (!pending || pending !== code) return false;
+    wx.removeStorageSync(KEY_PENDING_OWNER_SHARE_GUIDE_ROOM);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 module.exports = {
   setLastRoomCode,
   getLastRoomCode,
   setToken,
   getToken,
   setOpenId,
-  getOpenId
+  getOpenId,
+  setPendingOwnerShareGuideRoom,
+  consumePendingOwnerShareGuideRoom
 };
