@@ -37,6 +37,17 @@ page {
   padding-bottom: 48rpx;
 }
 
+.tx-list-footer {
+  text-align: center;
+  color: #8E8E93;
+  font-size: 24rpx;
+  padding: 16rpx 0 8rpx;
+}
+
+.tx-list-footer-error {
+  color: #FF3B30;
+}
+
 .action-row button {
   height: 76rpx;
   line-height: 76rpx;

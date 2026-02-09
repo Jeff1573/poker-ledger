@@ -107,6 +107,7 @@ function initSchema(db) {
       "CREATE INDEX IF NOT EXISTS idx_room_members_roomCode_active ON room_members(roomCode, active);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_members_roomCode_joinedAt ON room_members(roomCode, joinedAt);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_txs_roomCode_createdAt ON room_txs(roomCode, createdAt);\n" +
+      "CREATE INDEX IF NOT EXISTS idx_room_txs_roomCode_createdAt_id ON room_txs(roomCode, createdAt, id);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_totals_roomCode ON room_totals(roomCode);\n"
   );
 

@@ -9,6 +9,10 @@ const logger = require("./logger");
 // 房间号字符集：去掉易混淆字符（0/O，1/I）
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const ROOM_CODE_LEN = 6;
+// 交易分页配置：MVP 阶段固定每页/快照均为 100，前后端保持一致。
+const TX_SNAPSHOT_LIMIT = 100;
+const TX_PAGE_DEFAULT_LIMIT = 100;
+const TX_PAGE_MAX_LIMIT = 100;
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 ensureDir(DATA_DIR);
@@ -154,6 +158,77 @@ function rowToUserRoom(r) {
   };
 }
 
+/**
+ * 交易行转为对外结构。
+ *
+ * @param {any} row
+ * @param {string} roomCode
+ */
+function rowToTx(row, roomCode) {
+  return {
+    id: String(row.id || ""),
+    roomCode: normalizeRoomCode(row.roomCode || roomCode),
+    fromOpenId: String(row.fromOpenId || ""),
+    toOpenId: String(row.toOpenId || ""),
+    amount: Number(row.amount || 0),
+    note: String(row.note || ""),
+    createdAt: Number(row.createdAt || 0),
+    fromName: String(row.fromName || ""),
+    toName: String(row.toName || ""),
+    fromAvatar: String(row.fromAvatar || ""),
+    toAvatar: String(row.toAvatar || "")
+  };
+}
+
+/**
+ * 交易分页条数归一化。
+ *
+ * @param {any} limit
+ * @returns {number}
+ */
+function normalizeTxPageLimit(limit) {
+  const n = Number(limit || 0);
+  if (!Number.isInteger(n) || n <= 0) return TX_PAGE_DEFAULT_LIMIT;
+  return Math.min(TX_PAGE_MAX_LIMIT, n);
+}
+
+/**
+ * 查询房间交易分页（createdAt/id 双游标，避免同毫秒记录翻页错乱）。
+ *
+ * @param {string} roomCode
+ * @param {number|null} beforeCreatedAt
+ * @param {string|null} beforeId
+ * @param {number} limit
+ * @returns {{txs:any[], hasMore:boolean, nextBeforeCreatedAt:number|null, nextBeforeId:string|null}}
+ */
+function queryRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit) {
+  const rc = normalizeRoomCode(roomCode);
+  const pageLimit = normalizeTxPageLimit(limit);
+  const fetchLimit = pageLimit + 1;
+
+  const cursorCreatedAt = Number(beforeCreatedAt || 0);
+  const cursorId = String(beforeId || "").trim();
+  const hasCursor = Number.isInteger(cursorCreatedAt) && cursorCreatedAt > 0 && !!cursorId;
+
+  const rows = hasCursor
+    ? stmt.listRoomTxsBefore.all(rc, cursorCreatedAt, cursorCreatedAt, cursorId, fetchLimit)
+    : stmt.listRoomTxsLatest.all(rc, fetchLimit);
+
+  const pageRows = rows.slice(0, pageLimit);
+  const txs = pageRows.map((row) => rowToTx(row, rc));
+  const hasMore = rows.length > pageLimit;
+
+  let nextBeforeCreatedAt = null;
+  let nextBeforeId = null;
+  if (hasMore && pageRows.length > 0) {
+    const tail = pageRows[pageRows.length - 1];
+    nextBeforeCreatedAt = Number(tail.createdAt || 0);
+    nextBeforeId = String(tail.id || "");
+  }
+
+  return { txs, hasMore, nextBeforeCreatedAt, nextBeforeId };
+}
+
 const stmt = {
   getUser: db.prepare("SELECT openId, nickNameWx, avatarUrlWx, displayName, createdAt, updatedAt FROM users WHERE openId = ?"),
   insertUserIgnore: db.prepare(
@@ -201,8 +276,11 @@ const stmt = {
   subRoomTotal: db.prepare("UPDATE room_totals SET total = total - ? WHERE roomCode = ? AND openId = ?"),
   deleteRoomTotals: db.prepare("DELETE FROM room_totals WHERE roomCode = ?"),
 
-  listRoomTxs: db.prepare(
-    "SELECT id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar FROM room_txs WHERE roomCode = ? ORDER BY createdAt DESC LIMIT 200"
+  listRoomTxsLatest: db.prepare(
+    "SELECT id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar FROM room_txs WHERE roomCode = ? ORDER BY createdAt DESC, id DESC LIMIT ?"
+  ),
+  listRoomTxsBefore: db.prepare(
+    "SELECT id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar FROM room_txs WHERE roomCode = ? AND (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ?"
   ),
   insertTx: db.prepare(
     "INSERT INTO room_txs(id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -274,10 +352,17 @@ function genRoomCode() {
 }
 
 /**
- * 获取房间快照：room + members + txs（最近 200 笔，按 createdAt desc）。
+ * 获取房间快照：room + members + txs（最新窗口 100 笔，支持继续分页）。
  *
  * @param {string} roomCode
- * @returns {{room: any, members: any[], txs: any[]} | null}
+ * @returns {{
+ *   room: any,
+ *   members: any[],
+ *   txs: any[],
+ *   txHasMore: boolean,
+ *   txNextBeforeCreatedAt: number | null,
+ *   txNextBeforeId: string | null
+ * } | null}
  */
 function getRoomSnapshot(roomCode) {
   const rc = normalizeRoomCode(roomCode);
@@ -317,21 +402,28 @@ function getRoomSnapshot(roomCode) {
     return Number(a.joinedAt || 0) - Number(b.joinedAt || 0);
   });
 
-  const txs = stmt.listRoomTxs.all(rc).map((t) => ({
-    id: String(t.id || ""),
-    roomCode: normalizeRoomCode(t.roomCode || rc),
-    fromOpenId: String(t.fromOpenId || ""),
-    toOpenId: String(t.toOpenId || ""),
-    amount: Number(t.amount || 0),
-    note: String(t.note || ""),
-    createdAt: Number(t.createdAt || 0),
-    fromName: String(t.fromName || ""),
-    toName: String(t.toName || ""),
-    fromAvatar: String(t.fromAvatar || ""),
-    toAvatar: String(t.toAvatar || "")
-  }));
+  const txPage = queryRoomTxPage(rc, null, null, TX_SNAPSHOT_LIMIT);
 
-  return { room, members, txs };
+  return {
+    room,
+    members,
+    txs: txPage.txs,
+    txHasMore: txPage.hasMore,
+    txNextBeforeCreatedAt: txPage.nextBeforeCreatedAt,
+    txNextBeforeId: txPage.nextBeforeId
+  };
+}
+
+/**
+ * 获取交易历史分页（按 createdAt desc, id desc）。
+ *
+ * @param {string} roomCode
+ * @param {number|null} beforeCreatedAt
+ * @param {string|null} beforeId
+ * @param {number} limit
+ */
+function listRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit) {
+  return queryRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit);
 }
 
 /**
@@ -781,6 +873,7 @@ module.exports = {
   getUser,
   getUserRoom,
   getRoomSnapshot,
+  listRoomTxPage,
   getSettlement,
   getMe,
 

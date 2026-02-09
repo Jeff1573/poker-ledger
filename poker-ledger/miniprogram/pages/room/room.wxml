@@ -67,7 +67,15 @@
 
     <view wx:if="{{txRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无记录</view>
 
-    <scroll-view scroll-y enhanced="{{true}}" show-scrollbar="{{false}}" class="tx-list" wx:else>
+    <scroll-view
+      scroll-y
+      enhanced="{{true}}"
+      show-scrollbar="{{false}}"
+      class="tx-list"
+      lower-threshold="120"
+      bindscrolltolower="handleTxListReachBottom"
+      wx:else
+    >
       <view class="tx-list-container">
         <view wx:for="{{txRows}}" wx:key="id" class="tx-item row-between">
           <view class="tx-body">
@@ -82,6 +90,9 @@
           </view>
           <view class="tx-amount">{{item.amountText}}</view>
         </view>
+        <view class="tx-list-footer" wx:if="{{txLoadingMore}}">加载中...</view>
+        <view class="tx-list-footer tx-list-footer-error" wx:elif="{{txLoadError}}">{{txLoadError}}</view>
+        <view class="tx-list-footer" wx:elif="{{!txHasMore}}">没有更多记录了</view>
       </view>
     </scroll-view>
   </view>

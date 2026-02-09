@@ -5,6 +5,75 @@ const { resolveApiAssetUrl } = require("../../utils/url");
 const storage = require("../../utils/storage");
 const log = require("../../utils/log");
 
+const TX_PAGE_SIZE = 100;
+const TX_FRONT_SOFT_LIMIT = 500;
+
+/**
+ * 交易排序：时间倒序；同毫秒下按 id 倒序，确保分页边界稳定。
+ *
+ * @param {any} a
+ * @param {any} b
+ * @returns {number}
+ */
+function compareTxDesc(a, b) {
+  const aCreatedAt = Number((a && a.createdAt) || 0);
+  const bCreatedAt = Number((b && b.createdAt) || 0);
+  if (aCreatedAt !== bCreatedAt) return bCreatedAt - aCreatedAt;
+  return String((b && b.id) || "").localeCompare(String((a && a.id) || ""));
+}
+
+/**
+ * 统一交易对象格式，补全展示字段，避免多处重复拼装。
+ *
+ * @param {any} tx
+ * @returns {any|null}
+ */
+function normalizeTxForView(tx) {
+  if (!tx) return null;
+  const id = String(tx.id || "").trim();
+  if (!id) return null;
+  const createdAt = Number(tx.createdAt || 0);
+  return {
+    ...tx,
+    id,
+    createdAt,
+    timeText: formatTime(createdAt),
+    fromAvatarResolved: resolveApiAssetUrl(tx && tx.fromAvatar),
+    toAvatarResolved: resolveApiAssetUrl(tx && tx.toAvatar)
+  };
+}
+
+/**
+ * 合并两批交易并按 id 去重。
+ * - primary 优先：同 id 时保留 primary 的对象。
+ * - 最终统一按时间倒序，且限制前端软上限，避免长局内存持续增长。
+ *
+ * @param {any[]} primary
+ * @param {any[]} secondary
+ * @returns {any[]}
+ */
+function mergeTxList(primary, secondary) {
+  const idSet = new Set();
+  const merged = [];
+
+  const consume = (list) => {
+    const arr = Array.isArray(list) ? list : [];
+    for (const item of arr) {
+      const tx = normalizeTxForView(item);
+      if (!tx) continue;
+      if (idSet.has(tx.id)) continue;
+      idSet.add(tx.id);
+      merged.push(tx);
+    }
+  };
+
+  consume(primary);
+  consume(secondary);
+
+  merged.sort(compareTxDesc);
+  return merged.slice(0, TX_FRONT_SOFT_LIMIT);
+}
+
 /**
  * 房间页职责：
  * - 使用 WebSocket 实时同步房间快照（room/members/txs）
@@ -29,6 +98,11 @@ Page({
     totalsRows: [],
     txs: [],
     txRows: [],
+    txHasMore: false,
+    txLoadingMore: false,
+    txLoadError: "",
+    txCursorCreatedAt: 0,
+    txCursorId: "",
 
     // 点击成员头像转账（弹窗）
     showTransferModal: false,
@@ -196,19 +270,41 @@ Page({
       avatarUrlResolved: resolveApiAssetUrl(m && m.avatarUrl)
     }));
 
-    // 交易：补全头像 URL + 格式化时间
-    const txs = (snap.txs || []).map((t) => ({
-      ...t,
-      timeText: formatTime(t.createdAt),
-      fromAvatarResolved: resolveApiAssetUrl(t && t.fromAvatar),
-      toAvatarResolved: resolveApiAssetUrl(t && t.toAvatar)
-    }));
+    // 交易：快照只保证“最新窗口”，与本地已加载历史做合并去重。
+    const snapshotTxs = (snap.txs || []).map((t) => normalizeTxForView(t)).filter((t) => !!t);
+    const prevTxs = this.data.txs || [];
+    const txs = mergeTxList(snapshotTxs, prevTxs);
+
+    // 若本地已加载过更多历史，保持当前翻页游标，避免被快照回退到“最新 100”。
+    const keepExistingPaging = prevTxs.length > snapshotTxs.length;
+    const nextHasMoreRaw = !!snap.txHasMore;
+    const nextCursorCreatedAtRaw = Number(snap.txNextBeforeCreatedAt || 0);
+    const nextCursorIdRaw = String(snap.txNextBeforeId || "");
+    const nextHasMoreFromSnapshot = nextHasMoreRaw && nextCursorCreatedAtRaw > 0 && !!nextCursorIdRaw;
+
+    const existedHasMoreRaw = !!this.data.txHasMore;
+    const existedCursorCreatedAtRaw = Number(this.data.txCursorCreatedAt || 0);
+    const existedCursorIdRaw = String(this.data.txCursorId || "");
+    const existedHasMore = existedHasMoreRaw && existedCursorCreatedAtRaw > 0 && !!existedCursorIdRaw;
+
+    const txHasMore = keepExistingPaging ? existedHasMore : nextHasMoreFromSnapshot;
+    const txCursorCreatedAt = txHasMore
+      ? (keepExistingPaging ? existedCursorCreatedAtRaw : nextCursorCreatedAtRaw)
+      : 0;
+    const txCursorId = txHasMore
+      ? (keepExistingPaging ? existedCursorIdRaw : nextCursorIdRaw)
+      : "";
 
     this.setData(
       {
         room: snap.room || null,
         members,
-        txs
+        txs,
+        txHasMore,
+        txLoadingMore: false,
+        txLoadError: "",
+        txCursorCreatedAt,
+        txCursorId
       },
       () => {
         this.enrichMembersWithAmount();
@@ -375,15 +471,11 @@ Page({
     if (!tx || !totals) return;
 
     // 1. 格式化新交易（与 applySnapshot 中的处理保持一致）
-    const newTx = {
-      ...tx,
-      timeText: formatTime(tx.createdAt),
-      fromAvatarResolved: resolveApiAssetUrl(tx && tx.fromAvatar),
-      toAvatarResolved: resolveApiAssetUrl(tx && tx.toAvatar)
-    };
+    const newTx = normalizeTxForView(tx);
+    if (!newTx) return;
 
-    // 2. 将新交易插入到列表开头，并限制在 200 条以内（与后端一致）
-    const txs = [newTx, ...(this.data.txs || [])].slice(0, 200);
+    // 2. 将新交易插入列表，并做去重 + 前端软上限控制（500 条）
+    const txs = mergeTxList([newTx], this.data.txs || []);
 
     // 3. 更新房间总账
     const room = this.data.room || {};
@@ -536,6 +628,103 @@ Page({
     }
 
     this.setData({ txRows: rows });
+  },
+
+  /**
+   * 交易列表触底：尝试加载更早一页历史。
+   */
+  handleTxListReachBottom() {
+    this.loadMoreTxs();
+  },
+
+  /**
+   * 拉取交易历史分页（createdAt + id 双游标）。
+   */
+  async loadMoreTxs() {
+    if (this.data.txLoadingMore) return;
+    if (!this.data.txHasMore) return;
+
+    const beforeCreatedAt = Number(this.data.txCursorCreatedAt || 0);
+    const beforeId = String(this.data.txCursorId || "").trim();
+    if (!beforeCreatedAt || !beforeId) {
+      // 游标异常时直接收敛为“无更多”，避免无限请求。
+      this.setData({
+        txHasMore: false,
+        txLoadingMore: false,
+        txLoadError: "",
+        txCursorCreatedAt: 0,
+        txCursorId: ""
+      });
+      return;
+    }
+
+    this.setData({ txLoadingMore: true, txLoadError: "" });
+    log.info("tx.page.start", "开始加载交易历史分页", {
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+      beforeCreatedAt
+    });
+
+    try {
+      const app = getApp();
+      const query =
+        `beforeCreatedAt=${encodeURIComponent(beforeCreatedAt)}` +
+        `&beforeId=${encodeURIComponent(beforeId)}` +
+        `&limit=${TX_PAGE_SIZE}`;
+      const r = await app.apiCall({
+        path: `/api/rooms/${this.data.roomCode}/txs?${query}`,
+        method: "GET"
+      });
+
+      if (!r || !r.ok) {
+        const message = String((r && r.message) || "加载历史失败，请继续上拉重试");
+        log.warn("tx.page.biz_fail", "交易历史分页业务失败", {
+          roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+          code: String((r && r.code) || ""),
+          message
+        });
+        this.setData({
+          txLoadingMore: false,
+          txLoadError: message
+        });
+        return;
+      }
+
+      const pageTxs = (r.txs || []).map((t) => normalizeTxForView(t)).filter((t) => !!t);
+      const txs = mergeTxList(this.data.txs || [], pageTxs);
+
+      const nextHasMoreRaw = !!r.hasMore;
+      const nextBeforeCreatedAt = Number(r.nextBeforeCreatedAt || 0);
+      const nextBeforeId = String(r.nextBeforeId || "");
+      const txHasMore = nextHasMoreRaw && nextBeforeCreatedAt > 0 && !!nextBeforeId;
+
+      this.setData(
+        {
+          txs,
+          txHasMore,
+          txLoadingMore: false,
+          txLoadError: "",
+          txCursorCreatedAt: txHasMore ? nextBeforeCreatedAt : 0,
+          txCursorId: txHasMore ? nextBeforeId : ""
+        },
+        () => {
+          this.rebuildTxRows();
+        }
+      );
+      log.info("tx.page.success", "交易历史分页加载成功", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        pageCount: pageTxs.length,
+        hasMore: txHasMore
+      });
+    } catch (err) {
+      log.warn("tx.page.fail", "交易历史分页请求失败", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        errMsg: String((err && err.message) || err || "")
+      });
+      this.setData({
+        txLoadingMore: false,
+        txLoadError: "网络异常，请继续上拉重试"
+      });
+    }
   },
 
   /**

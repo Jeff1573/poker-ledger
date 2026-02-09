@@ -67,6 +67,8 @@ const upload = multer({
 });
 
 const ALLOWED_IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+const TX_PAGE_DEFAULT_LIMIT = 100;
+const TX_PAGE_MAX_LIMIT = 100;
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -77,6 +79,20 @@ function extFromMime(mime) {
   if (mime === "image/png") return "png";
   if (mime === "image/webp") return "webp";
   return "jpg";
+}
+
+/**
+ * 解析正整数参数（空值返回 null）。
+ *
+ * @param {any} raw
+ * @returns {number|null}
+ */
+function parsePositiveIntParam(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const n = Number(text);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return n;
 }
 
 /**
@@ -413,6 +429,78 @@ app.get("/api/rooms/:roomCode/snapshot", authMiddleware, async (req, res) => {
     txCount: Array.isArray(snap.txs) ? snap.txs.length : 0
   });
   return ok(res, snap);
+});
+
+/**
+ * 获取房间交易分页（触底加载历史）。
+ */
+app.get("/api/rooms/:roomCode/txs", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+  const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
+
+  const mapping = store.getUserRoom(openId);
+  if (!mapping || mapping.roomCode !== roomCode) {
+    routeLog(req, "warn", "room.txs.page.fail", "获取交易分页失败：无权限", {
+      code: "FORBIDDEN",
+      roomCode
+    });
+    return fail(res, "FORBIDDEN", "你不在该房间中");
+  }
+
+  const beforeCreatedAtText = String((req.query && req.query.beforeCreatedAt) || "").trim();
+  const beforeIdText = String((req.query && req.query.beforeId) || "").trim();
+  const limitText = String((req.query && req.query.limit) || "").trim();
+
+  let limit = TX_PAGE_DEFAULT_LIMIT;
+  if (limitText) {
+    const parsedLimit = parsePositiveIntParam(limitText);
+    if (!parsedLimit || parsedLimit > TX_PAGE_MAX_LIMIT) {
+      routeLog(req, "warn", "room.txs.page.fail", "获取交易分页失败：limit 非法", {
+        code: "INVALID_LIMIT",
+        roomCode,
+        limitText
+      });
+      return fail(res, "INVALID_LIMIT", `limit 必须是 1~${TX_PAGE_MAX_LIMIT} 的整数`);
+    }
+    limit = parsedLimit;
+  }
+
+  const hasBeforeCreatedAt = !!beforeCreatedAtText;
+  const hasBeforeId = !!beforeIdText;
+  let beforeCreatedAt = null;
+  let beforeId = null;
+
+  // 游标必须“要么都传，要么都不传”，避免出现翻页边界不确定。
+  if (hasBeforeCreatedAt || hasBeforeId) {
+    if (!hasBeforeCreatedAt || !hasBeforeId) {
+      routeLog(req, "warn", "room.txs.page.fail", "获取交易分页失败：游标参数不完整", {
+        code: "INVALID_CURSOR",
+        roomCode
+      });
+      return fail(res, "INVALID_CURSOR", "beforeCreatedAt 与 beforeId 必须同时提供");
+    }
+
+    const parsedBeforeCreatedAt = parsePositiveIntParam(beforeCreatedAtText);
+    if (!parsedBeforeCreatedAt) {
+      routeLog(req, "warn", "room.txs.page.fail", "获取交易分页失败：beforeCreatedAt 非法", {
+        code: "INVALID_CURSOR",
+        roomCode,
+        beforeCreatedAtText
+      });
+      return fail(res, "INVALID_CURSOR", "beforeCreatedAt 必须是正整数");
+    }
+    beforeCreatedAt = parsedBeforeCreatedAt;
+    beforeId = beforeIdText;
+  }
+
+  const page = store.listRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit);
+  routeLog(req, "debug", "room.txs.page.ok", "获取交易分页成功", {
+    roomCode,
+    txCount: Array.isArray(page.txs) ? page.txs.length : 0,
+    hasMore: !!page.hasMore,
+    limit
+  });
+  return ok(res, page);
 });
 
 /**
