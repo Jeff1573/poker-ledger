@@ -60,9 +60,11 @@ function normalizeRoomCode(raw) {
  * @returns {string}
  */
 function extractInviteRoomCodeFromOptions(options) {
-  const roomCodeFromQuery = safeDecode(options && (options.roomCode || options.code));
-  const scene = safeDecode(options && options.scene);
-  return normalizeRoomCode(roomCodeFromQuery) || normalizeRoomCode(scene);
+  // 仅认 roomCode/code，不再从 scene 读取，避免把微信入口场景值（如 1001）误判为房间号。
+  const roomCodeFromQuery = safeDecode(
+    options && (options.roomCode || options.code || (options.query && (options.query.roomCode || options.query.code)))
+  );
+  return normalizeRoomCode(roomCodeFromQuery);
 }
 
 /**
@@ -464,8 +466,7 @@ Page({
   /**
    * 从扫码结果中尽可能提取 roomCode：
    * - 服务端二维码：PLROOM:ROOMCODE
-   * - 小程序码：通常在 res.path 中带 scene
-   * - 普通二维码：可能直接是 roomCode / 或带 scene 参数的链接
+   * - 普通二维码：可能直接是 roomCode / 或带 roomCode|code 参数的链接
    *
    * @param {any} res
    * @returns {string}
@@ -478,8 +479,8 @@ Page({
       const mPl = s.match(/^PLROOM:([0-9A-Za-z]{4,12})$/i);
       if (mPl && mPl[1]) return String(mPl[1]).trim().toUpperCase();
 
-      const mScene = s.match(/[?&]scene=([^&]+)/);
-      if (mScene && mScene[1]) return decodeURIComponent(mScene[1]).trim().toUpperCase();
+      const mRoomCode = s.match(/[?&]roomCode=([^&]+)/i);
+      if (mRoomCode && mRoomCode[1]) return decodeURIComponent(mRoomCode[1]).trim().toUpperCase();
 
       const mCode = s.match(/[?&]code=([^&]+)/);
       if (mCode && mCode[1]) return decodeURIComponent(mCode[1]).trim().toUpperCase();

@@ -60,9 +60,11 @@ function normalizeInviteRoomCode(raw) {
  * @returns {string}
  */
 function extractInviteRoomCodeFromOptions(options) {
-  const roomCodeFromQuery = safeDecode(options && (options.roomCode || options.code));
-  const scene = safeDecode(options && options.scene);
-  return normalizeInviteRoomCode(roomCodeFromQuery) || normalizeInviteRoomCode(scene);
+  // 仅认 roomCode/code，不再从 scene 读取，避免把微信入口场景值（如 1001）误判为房间号。
+  const roomCodeFromQuery = safeDecode(
+    options && (options.roomCode || options.code || (options.query && (options.query.roomCode || options.query.code)))
+  );
+  return normalizeInviteRoomCode(roomCodeFromQuery);
 }
 
 App({
