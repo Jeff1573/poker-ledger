@@ -606,7 +606,7 @@ Page({
    */
   async confirmTransfer() {
     if (!this.data.transferCanSubmit) return;
-    if (this.data.loading) return;
+    if (this._transferSubmitting) return;
 
     const toOpenId = String(this.data.transferToOpenId || "").trim();
     const amount = Number(this.data.transferAmountText);
@@ -625,7 +625,8 @@ Page({
       return;
     }
 
-    this.setData({ loading: true });
+    // 转账提交使用页面私有状态，避免触发 loading 相关按钮禁用样式（发灰）。
+    this._transferSubmitting = true;
     try {
       const app = getApp();
       const r = await app.apiCall({
@@ -644,14 +645,20 @@ Page({
       }
 
       this.closeTransferModal();
-      // WS 可能因弱网短暂断开，转账成功后补拉一次快照，确保金额/记录最终一致。
-      await this.fetchSnapshot();
-      log.info("tx.submit.success", "转账提交成功并完成兜底快照", {
+      // 优先依赖 WS 的 tx_added 增量推送，避免每次转账后整页快照刷新。
+      // 仅在 WS 未连接时兜底拉取一次快照，保证最终一致性。
+      let usedSnapshotFallback = false;
+      if (!this._socketOpen) {
+        usedSnapshotFallback = true;
+        await this.fetchSnapshot();
+      }
+
+      log.info("tx.submit.success", "转账提交成功", {
         roomCodeMasked: log.maskRoomCode(this.data.roomCode),
         toOpenIdMasked: log.maskOpenId(toOpenId),
-        amount
+        amount,
+        usedSnapshotFallback
       });
-      wx.showToast({ title: "已记录", icon: "success" });
     } catch (err) {
       console.error("transfer 失败", err);
       log.error("tx.submit.fail", "转账提交失败", {
@@ -662,7 +669,7 @@ Page({
       });
       this.toast("转账失败，请稍后重试");
     } finally {
-      this.setData({ loading: false });
+      this._transferSubmitting = false;
     }
   },
 
