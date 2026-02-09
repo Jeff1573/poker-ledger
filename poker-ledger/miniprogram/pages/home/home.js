@@ -4,6 +4,68 @@ const storage = require("../../utils/storage");
 const { resolveApiAssetUrl } = require("../../utils/url");
 
 /**
+ * 安全解码：避免非法编码导致 decodeURIComponent 抛错。
+ *
+ * @param {any} v
+ * @returns {string}
+ */
+function safeDecode(v) {
+  const text = String(v || "");
+  if (!text) return "";
+  try {
+    return decodeURIComponent(text);
+  } catch (err) {
+    return text;
+  }
+}
+
+/**
+ * 将输入归一化为合法房间号。
+ * 兼容：纯房间号 / PLROOM:ROOMCODE / query 字符串中的 roomCode|code 参数。
+ *
+ * @param {any} raw
+ * @returns {string}
+ */
+function normalizeRoomCode(raw) {
+  const tryValidate = (candidate) => {
+    const parsed = validateRoomCode(String(candidate || "").trim().toUpperCase());
+    return parsed.ok ? parsed.code : "";
+  };
+
+  const text = String(raw || "").trim();
+  if (!text) return "";
+
+  const direct = tryValidate(text);
+  if (direct) return direct;
+
+  const plMatch = text.match(/^PLROOM:([0-9A-Za-z]{4,12})$/i);
+  if (plMatch && plMatch[1]) {
+    const fromPl = tryValidate(plMatch[1]);
+    if (fromPl) return fromPl;
+  }
+
+  const paramMatch = text.match(/[?&](?:roomCode|code)=([^&]+)/i);
+  if (paramMatch && paramMatch[1]) {
+    const fromParam = tryValidate(safeDecode(paramMatch[1]));
+    if (fromParam) return fromParam;
+  }
+
+  return "";
+}
+
+/**
+ * 从页面参数中提取邀请码房间号。
+ *
+ * @param {any} options
+ * @returns {string}
+ */
+function extractInviteRoomCodeFromOptions(options) {
+  const roomCodeFromQuery = safeDecode(options && (options.roomCode || options.code));
+  const scene = safeDecode(options && options.scene);
+  return normalizeRoomCode(roomCodeFromQuery) || normalizeRoomCode(scene);
+}
+
+/**
  * 首页职责：
  * 1) 获取用户授权信息（头像/昵称）
  * 2) 创建房间（房主）/ 加入房间（成员）/ 扫码加入
@@ -30,62 +92,37 @@ Page({
 
   onLoad(options) {
     const last = storage.getLastRoomCode();
-    const safeDecode = (v) => {
-      const text = String(v || "");
-      if (!text) return "";
-      try {
-        return decodeURIComponent(text);
-      } catch (err) {
-        return text;
-      }
-    };
-    const normalizeRoomCode = (raw) => {
-      const tryValidate = (candidate) => {
-        const parsed = validateRoomCode(String(candidate || "").trim().toUpperCase());
-        return parsed.ok ? parsed.code : "";
-      };
-
-      const text = String(raw || "").trim();
-      if (!text) return "";
-
-      // 1) 直接就是房间号
-      const direct = tryValidate(text);
-      if (direct) return direct;
-
-      // 2) 兼容 PLROOM:ROOMCODE 形式（二维码文本常见）
-      const plMatch = text.match(/^PLROOM:([0-9A-Za-z]{4,12})$/i);
-      if (plMatch && plMatch[1]) {
-        const fromPl = tryValidate(plMatch[1]);
-        if (fromPl) return fromPl;
-      }
-
-      // 3) 兼容携带查询参数的字符串（如 ?roomCode=XXXX / ?code=XXXX）
-      const paramMatch = text.match(/[?&](?:roomCode|code)=([^&]+)/i);
-      if (paramMatch && paramMatch[1]) {
-        const fromParam = tryValidate(safeDecode(paramMatch[1]));
-        if (fromParam) return fromParam;
-      }
-
-      return "";
-    };
-
-    // 说明：分享卡片优先用 roomCode/code；二维码场景兜底从 scene 解析。
-    const roomCodeFromQuery = safeDecode(options && (options.roomCode || options.code));
-    const scene = safeDecode(options && options.scene);
-    const pendingRoomCode = normalizeRoomCode(roomCodeFromQuery) || normalizeRoomCode(scene);
+    const pendingRoomCode = extractInviteRoomCodeFromOptions(options);
 
     // 说明：新版推荐做法是让用户主动选择头像 + 输入昵称（无需获取 userInfo 明文授权）
     const supportChooseAvatar =
       !!wx.canIUse && wx.canIUse("button.open-type.chooseAvatar") && wx.canIUse("input.type.nickname");
 
     this.setData({
-      roomCodeInput: last || "",
+      roomCodeInput: pendingRoomCode || last || "",
       pendingRoomCode,
       supportChooseAvatar
     });
+
+    if (pendingRoomCode) {
+      storage.setLastRoomCode(pendingRoomCode);
+    }
   },
 
   onShow() {
+    // onShow 先消费 app 全局邀请码，覆盖热启动分享场景（onLoad 不会重复触发）。
+    const app = getApp();
+    const inviteRoomCode =
+      app && typeof app.consumePendingInviteRoomCode === "function" ? app.consumePendingInviteRoomCode() : "";
+
+    if (inviteRoomCode) {
+      this.setData({
+        pendingRoomCode: inviteRoomCode,
+        roomCodeInput: inviteRoomCode
+      });
+      storage.setLastRoomCode(inviteRoomCode);
+    }
+
     this.bootstrap();
   },
 
@@ -137,9 +174,12 @@ Page({
         userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx)
       });
 
-      // 3) 如果是扫码进入并已授权，尝试自动加入
+      // 3) 如果携带邀请码且已授权，尝试自动加入
       if (this.data.pendingRoomCode && hasProfile) {
-        await this.joinRoomByCode(this.data.pendingRoomCode);
+        // 先清空 pending，避免自动加入失败后每次 onShow 都重复重试。
+        const inviteRoomCode = String(this.data.pendingRoomCode || "").trim().toUpperCase();
+        this.setData({ pendingRoomCode: "" });
+        await this.joinRoomByCode(inviteRoomCode);
       }
     } catch (err) {
       console.error("bootstrap 失败", err);
@@ -459,7 +499,7 @@ Page({
   },
 
   /**
-   * 封装加入房间逻辑，并清空 pendingRoomCode，避免重复触发。
+   * 封装加入房间逻辑（自动入房/手动入房共用）。
    * 并发控制说明：
    * - 通过 _joining 防重入，避免重复点击/重复自动触发导致并发请求
    * - 不再使用 data.loading 作为“是否允许 join”的门禁，避免 bootstrap 期间被误拦截
@@ -530,20 +570,8 @@ Page({
         return;
       }
 
-      // 保存成功后刷新用户档案
-      const fresh = await app.loadMe();
-      const user = (fresh && fresh.user) || null;
-      const hasProfile = !!(user && user.displayName && user.avatarUrlWx);
-      this.setData({
-        hasProfile,
-        user,
-        userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx)
-      });
-
-      // 若是扫码进入（pendingRoomCode），此时可继续自动加入
-      if (this.data.pendingRoomCode && hasProfile) {
-        await this.joinRoomByCode(this.data.pendingRoomCode);
-      }
+      // 保存成功后按统一路由链路继续（含“已在房间优先 + 邀请自动加入”）。
+      await this.bootstrap();
     } catch (err) {
       // 用户拒绝授权属于正常场景，不做硬提示
     } finally {

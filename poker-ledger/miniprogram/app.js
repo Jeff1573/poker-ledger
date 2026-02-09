@@ -1,12 +1,77 @@
 const api = require("./utils/api");
 const log = require("./utils/log");
 const storage = require("./utils/storage");
+const { validateRoomCode } = require("./utils/validator");
+
+/**
+ * 安全解码：避免非法编码导致 decodeURIComponent 抛错。
+ *
+ * @param {any} v
+ * @returns {string}
+ */
+function safeDecode(v) {
+  const text = String(v || "");
+  if (!text) return "";
+  try {
+    return decodeURIComponent(text);
+  } catch (err) {
+    return text;
+  }
+}
+
+/**
+ * 将各种输入归一化为合法房间号。
+ * 兼容：纯房间号 / PLROOM:ROOMCODE / query 字符串中的 roomCode|code 参数。
+ *
+ * @param {any} raw
+ * @returns {string}
+ */
+function normalizeInviteRoomCode(raw) {
+  const tryValidate = (candidate) => {
+    const parsed = validateRoomCode(String(candidate || "").trim().toUpperCase());
+    return parsed.ok ? parsed.code : "";
+  };
+
+  const text = String(raw || "").trim();
+  if (!text) return "";
+
+  const direct = tryValidate(text);
+  if (direct) return direct;
+
+  const plMatch = text.match(/^PLROOM:([0-9A-Za-z]{4,12})$/i);
+  if (plMatch && plMatch[1]) {
+    const fromPl = tryValidate(plMatch[1]);
+    if (fromPl) return fromPl;
+  }
+
+  const paramMatch = text.match(/[?&](?:roomCode|code)=([^&]+)/i);
+  if (paramMatch && paramMatch[1]) {
+    const fromParam = tryValidate(safeDecode(paramMatch[1]));
+    if (fromParam) return fromParam;
+  }
+
+  return "";
+}
+
+/**
+ * 从小程序启动参数中提取邀请码房间号。
+ *
+ * @param {any} options
+ * @returns {string}
+ */
+function extractInviteRoomCodeFromOptions(options) {
+  const roomCodeFromQuery = safeDecode(options && (options.roomCode || options.code));
+  const scene = safeDecode(options && options.scene);
+  return normalizeInviteRoomCode(roomCodeFromQuery) || normalizeInviteRoomCode(scene);
+}
 
 App({
   globalData: {
     token: "",
     openId: "",
-    user: null
+    user: null,
+    // 记录“待处理邀请码”，供首页 onShow 消费一次，解决热启动分享场景。
+    pendingInviteRoomCode: ""
   },
 
   /**
@@ -16,7 +81,9 @@ App({
    * - 这一步不需要用户授权（不涉及头像昵称）
    * - 头像昵称需要在页面中通过 wx.getUserProfile 由用户点击触发
    */
-  onLaunch() {
+  onLaunch(options) {
+    this.captureInviteRoomCode(options);
+
     // 尽早建立登录态，避免页面首次进入时再等待
     log.info("session.launch", "小程序启动，开始初始化登录态");
     this.ensureSession().catch((err) => {
@@ -24,6 +91,48 @@ App({
         errMsg: String((err && err.message) || err || "")
       });
     });
+  },
+
+  /**
+   * 小程序前后台切换时，持续捕获来自分享卡片/小程序码的参数。
+   *
+   * @param {any} options
+   */
+  onShow(options) {
+    this.captureInviteRoomCode(options);
+  },
+
+  /**
+   * 捕获邀请码（若存在则覆盖旧值，始终保留最新一次进入参数）。
+   *
+   * @param {any} options
+   * @returns {string}
+   */
+  captureInviteRoomCode(options) {
+    const code = extractInviteRoomCodeFromOptions(options);
+    if (!code) return "";
+
+    this.globalData.pendingInviteRoomCode = code;
+    log.info("invite.capture", "捕获到待处理邀请码", {
+      roomCodeMasked: log.maskRoomCode(code)
+    });
+    return code;
+  },
+
+  /**
+   * 消费一次待处理邀请码。
+   *
+   * @returns {string}
+   */
+  consumePendingInviteRoomCode() {
+    const code = String(this.globalData.pendingInviteRoomCode || "").trim().toUpperCase();
+    this.globalData.pendingInviteRoomCode = "";
+    if (code) {
+      log.debug("invite.consume", "消费待处理邀请码", {
+        roomCodeMasked: log.maskRoomCode(code)
+      });
+    }
+    return code;
   },
 
   /**
