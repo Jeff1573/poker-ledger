@@ -17,5 +17,18 @@
     "checkInvalidKey": true,
     "ignoreDevUnusedFiles": true,
     "bigPackageSizeSupport": false
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        {
+          "name": "pages/home/home",
+          "pathName": "pages/home/home",
+          "query": "roomCode=M3JCF6",
+          "scene": null,
+          "launchMode": "default"
+        }
+      ]
+    }
   }
 }

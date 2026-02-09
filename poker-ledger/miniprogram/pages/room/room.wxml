@@ -10,10 +10,10 @@
     </view>
 
     <view wx:if="{{role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
-      <button class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
+      <button wx:if="{{false}}" class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
         入房码
       </button>
-      <button class="btn-primary action-btn action-btn-gap" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+      <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
         分享邀请
       </button>
       <button class="btn-danger action-btn action-btn-gap" bindtap="handleDissolve" disabled="{{loading}}">
@@ -105,8 +105,8 @@
     </view>
 
     <view class="row share-guide-actions" style="margin-top: 22rpx;">
-      <button class="btn-primary" style="flex: 1;" bindtap="handleShareByMenuTip">如何分享</button>
-      <button class="btn-plain" style="flex: 1; margin-left: 14rpx;" bindtap="closeShareGuide">稍后</button>
+      <!-- <button class="btn-primary" style="flex: 1;" bindtap="handleShareByMenuTip">如何分享</button> -->
+      <button class="btn-plain" style="flex: 1; margin-left: 14rpx;" bindtap="closeShareGuide">知道了</button>
     </view>
   </view>
 </view>
