@@ -9,7 +9,7 @@
 }
 
 # 生产域名
-poker.mdice.top {
+your-domain.com {
   # Caddy 会自动处理 WebSocket 升级，不手工透传 Upgrade/Connection 头
   reverse_proxy app:3000
 
