@@ -7,10 +7,23 @@
 your-domain.com {
     # 反向代理到应用服务器
     reverse_proxy app:3000 {
-        # WebSocket 支持
+         # WebSocket 支持
+        flush_interval -1
+        
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
         header_up X-Forwarded-Proto {scheme}
+        
+        # 传递 WebSocket 相关头部
+        header_up Host {host}
+        header_up Connection {>Connection}
+        header_up Upgrade {>Upgrade}
+        
+        # 超时配置
+        transport http {
+            read_timeout 0
+            write_timeout 0
+        }
     }
 
     # 日志

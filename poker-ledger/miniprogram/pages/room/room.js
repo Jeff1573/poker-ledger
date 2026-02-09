@@ -228,10 +228,14 @@ Page({
     const session = await app.ensureSession();
     const token = session.token;
 
-    const url = `${String(CONST.WS_BASE_URL || "").replace(/\/$/, "")}/ws?token=${encodeURIComponent(token)}`;
+    const wsBase = String(CONST.WS_BASE_URL || "").replace(/\/$/, "");
+    const url = `${wsBase}/ws?token=${encodeURIComponent(token)}`;
+    // 仅打印脱敏后的连接地址，便于真机排查“到底连到了哪个域名/路径”。
+    const wsUrlMasked = `${wsBase}/ws?token=${encodeURIComponent(log.maskToken(token) || "******")}`;
     log.info("ws.connect.start", "开始建立 WebSocket 连接", {
       roomCodeMasked: log.maskRoomCode(this.data.roomCode),
-      tokenMasked: log.maskToken(token)
+      tokenMasked: log.maskToken(token),
+      wsUrlMasked
     });
     const task = wx.connectSocket({ url });
     this._socket = task;

@@ -577,6 +577,32 @@ app.get("/api/rooms/:roomCode/qrcode.png", async (req, res) => {
 
 // ---------- WebSocket ----------
 const server = http.createServer(app);
+server.on("upgrade", (req) => {
+  const rawUrl = String(req.url || "");
+  let pathName = "";
+  let tokenLen = 0;
+
+  try {
+    const parsedUrl = new URL(rawUrl, "http://localhost");
+    pathName = String(parsedUrl.pathname || "");
+    tokenLen = String(parsedUrl.searchParams.get("token") || "").length;
+  } catch (err) {
+    pathName = String((rawUrl.split("?")[0]) || "");
+  }
+
+  // 仅记录握手元信息，帮助定位真机连接是否到达服务端，不打印 token 明文。
+  logger.info({
+    scope: "ws",
+    event: "ws.upgrade.incoming",
+    msg: "收到 WebSocket Upgrade 请求",
+    extra: {
+      path: pathName,
+      tokenLen,
+      ip: String((req.socket && req.socket.remoteAddress) || ""),
+      userAgent: String(req.headers["user-agent"] || "").slice(0, 200)
+    }
+  });
+});
 const wss = new WebSocketServer({ server, path: "/ws" });
 const wsHub = createWsHub({ wss, store });
 
