@@ -1,36 +1,23 @@
 {
-    # 全局配置
-    email admin@example.com  # 用于 Let's Encrypt 证书通知
+  # 全局配置
+  email admin@example.com  # 用于 Let's Encrypt 证书通知
+
+  # 显式保留 h1，避免部分 iOS 场景下 WebSocket 与 h2/h3 协商异常
+  servers {
+    protocols h1 h2 h3
+  }
 }
 
-# 替换为你的域名
-your-domain.com {
-    # 反向代理到应用服务器
-    reverse_proxy app:3000 {
-         # WebSocket 支持
-        flush_interval -1
-        
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-        
-        # 传递 WebSocket 相关头部
-        header_up Host {host}
-        header_up Connection {>Connection}
-        header_up Upgrade {>Upgrade}
-        
-        # 超时配置
-        transport http {
-            read_timeout 0
-            write_timeout 0
-        }
-    }
+# 生产域名
+poker.mdice.top {
+  # Caddy 会自动处理 WebSocket 升级，不手工透传 Upgrade/Connection 头
+  reverse_proxy app:3000
 
-    # 日志
-    log {
-        output file /data/access.log
-        format json
-    }
+  # 访问日志
+  log {
+    output file /data/access.log
+    format json
+  }
 
-    # HTTPS 自动配置(Caddy 自动处理)
+  # HTTPS 自动配置（Caddy 自动处理）
 }
