@@ -30,10 +30,49 @@ Page({
 
   onLoad(options) {
     const last = storage.getLastRoomCode();
+    const safeDecode = (v) => {
+      const text = String(v || "");
+      if (!text) return "";
+      try {
+        return decodeURIComponent(text);
+      } catch (err) {
+        return text;
+      }
+    };
+    const normalizeRoomCode = (raw) => {
+      const tryValidate = (candidate) => {
+        const parsed = validateRoomCode(String(candidate || "").trim().toUpperCase());
+        return parsed.ok ? parsed.code : "";
+      };
 
-    // 说明：通过页面参数进入时，roomCode 可能在 scene 中透传（也可能是纯二维码扫描结果）
-    const scene = (options && options.scene && decodeURIComponent(options.scene)) || "";
-    const pendingRoomCode = String(scene || "").trim().toUpperCase();
+      const text = String(raw || "").trim();
+      if (!text) return "";
+
+      // 1) 直接就是房间号
+      const direct = tryValidate(text);
+      if (direct) return direct;
+
+      // 2) 兼容 PLROOM:ROOMCODE 形式（二维码文本常见）
+      const plMatch = text.match(/^PLROOM:([0-9A-Za-z]{4,12})$/i);
+      if (plMatch && plMatch[1]) {
+        const fromPl = tryValidate(plMatch[1]);
+        if (fromPl) return fromPl;
+      }
+
+      // 3) 兼容携带查询参数的字符串（如 ?roomCode=XXXX / ?code=XXXX）
+      const paramMatch = text.match(/[?&](?:roomCode|code)=([^&]+)/i);
+      if (paramMatch && paramMatch[1]) {
+        const fromParam = tryValidate(safeDecode(paramMatch[1]));
+        if (fromParam) return fromParam;
+      }
+
+      return "";
+    };
+
+    // 说明：分享卡片优先用 roomCode/code；二维码场景兜底从 scene 解析。
+    const roomCodeFromQuery = safeDecode(options && (options.roomCode || options.code));
+    const scene = safeDecode(options && options.scene);
+    const pendingRoomCode = normalizeRoomCode(roomCodeFromQuery) || normalizeRoomCode(scene);
 
     // 说明：新版推荐做法是让用户主动选择头像 + 输入昵称（无需获取 userInfo 明文授权）
     const supportChooseAvatar =
@@ -326,7 +365,7 @@ Page({
         return;
       }
 
-      wx.redirectTo({ url: `/pages/room/room?code=${r.roomCode}` });
+      wx.redirectTo({ url: `/pages/room/room?code=${r.roomCode}&from=create` });
     } catch (err) {
       console.error("创建房间失败", err);
       this.toast("创建失败，请稍后重试");

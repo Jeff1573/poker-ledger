@@ -16,6 +16,9 @@ Page({
     loading: false,
 
     roomCode: "",
+    fromCreate: false,
+    showShareGuide: false,
+    ownerGuideShown: false,
     role: "",
     roleText: "",
     meOpenId: "",
@@ -41,16 +44,26 @@ Page({
 
   onLoad(options) {
     const roomCode = String((options && options.code) || "").trim().toUpperCase();
+    const fromCreate = String((options && options.from) || "").trim().toLowerCase() === "create";
     if (!roomCode) {
       wx.showToast({ title: "缺少房间号", icon: "none" });
       wx.redirectTo({ url: "/pages/home/home" });
       return;
     }
-    this.setData({ roomCode });
+    this.setData({ roomCode, fromCreate });
   },
 
   onShow() {
     this._pageActive = true;
+    // 房间内允许“发送给朋友”，失败时静默降级（低版本基础库可能不支持）。
+    try {
+      wx.showShareMenu({
+        menus: ["shareAppMessage"],
+        fail: () => {}
+      });
+    } catch (err) {
+      // ignore
+    }
     this.enterRoom();
   },
 
@@ -98,7 +111,15 @@ Page({
       }
 
       const roleText = myRoom.role === "owner" ? "房主" : "成员";
-      this.setData({ role: myRoom.role, roleText });
+      const shouldShowShareGuide =
+        myRoom.role === "owner" && this.data.fromCreate && !this.data.ownerGuideShown;
+
+      this.setData({
+        role: myRoom.role,
+        roleText,
+        showShareGuide: shouldShowShareGuide,
+        ownerGuideShown: this.data.ownerGuideShown || shouldShowShareGuide
+      });
 
       // 1) 建立 WS 订阅（实时同步）
       await this.startSocket();
@@ -552,6 +573,30 @@ Page({
     this.setData({ showJoinCode: false });
   },
 
+  /**
+   * 关闭“首次分享引导”弹层。
+   */
+  closeShareGuide() {
+    this.setData({ showShareGuide: false });
+  },
+
+  /**
+   * 引导用户通过右上角菜单分享。
+   *
+   * 说明：
+   * - 未认证账号在部分环境下，按钮 open-type="share" 可能受限；
+   * - 右上角菜单仍可触发 onShareAppMessage，因此统一引导到该入口。
+   */
+  handleShareByMenuTip() {
+    if (this.data.showShareGuide) this.closeShareGuide();
+    wx.showModal({
+      title: "分享邀请",
+      content: "请点击右上角“...”后选择“发送给朋友”，即可邀请他人加入当前房间。",
+      showCancel: false,
+      confirmText: "知道了"
+    });
+  },
+
   async handleLeave() {
     if (this.data.role === "owner") return;
     if (this.data.loading) return;
@@ -650,5 +695,27 @@ Page({
       title: String(title || ""),
       icon: "none"
     });
+  },
+
+  /**
+   * 房间分享卡片配置：
+   * - 落点必须是 home，避免新用户直接进入 room 被权限校验拦截。
+   * - roomCode 放到 query，供 home.onLoad 解析并自动加入。
+   *
+   * @param {{from?: string}} res
+   * @returns {{title: string, path: string}}
+   */
+  onShareAppMessage(res) {
+    // 仅保留右上角菜单分享通路：若引导层还在，分享时顺便关闭，避免重复打扰。
+    if (this.data.showShareGuide) {
+      this.closeShareGuide();
+    }
+
+    const roomCode = String(this.data.roomCode || "").trim().toUpperCase();
+    const code = encodeURIComponent(roomCode);
+    return {
+      title: `点击加入房间 ${roomCode}`,
+      path: `/pages/home/home?roomCode=${code}`
+    };
   }
 });

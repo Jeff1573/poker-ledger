@@ -42,6 +42,14 @@ page {
   line-height: 76rpx;
 }
 
+.action-btn {
+  flex: 1;
+}
+
+.action-btn-gap {
+  margin-left: 14rpx;
+}
+
 .member-scroll {
   white-space: nowrap;
 }
@@ -254,4 +262,8 @@ page {
   margin-top: 18rpx;
   background: #F2F2F7;
   border-radius: 18rpx;
+}
+
+.share-guide-card .title {
+  text-align: center;
 }

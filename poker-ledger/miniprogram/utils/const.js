@@ -4,10 +4,12 @@
  */
 module.exports = {
   // 后端 HTTP 基地址（生产环境必须为 HTTPS，并配置到小程序“request 合法域名”）
-  API_BASE_URL: "http://192.168.2.106:3000",
+  // API_BASE_URL: "http://192.168.2.106:3000", // dev
+  API_BASE_URL: "https://poker.mdice.top",   // pro
 
   // 后端 WebSocket 基地址（生产环境使用 wss://，并配置到小程序“socket 合法域名”）
-  WS_BASE_URL: "ws://192.168.2.106:3000",
+  // WS_BASE_URL: "ws://192.168.2.106:3000", // dev
+  WS_BASE_URL: "wss://poker.mdice.top",   // pro
 
   // 房间号字符集：去掉易混淆字符（0/O，1/I）
   ROOM_CODE_ALPHABET: "23456789ABCDEFGHJKLMNPQRSTUVWXYZ",

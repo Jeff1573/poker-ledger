@@ -9,33 +9,23 @@
       <button class="btn-plain" size="mini" bindtap="copyRoomCode">复制</button>
     </view>
 
-    <view class="row action-row" style="margin-top: 18rpx;">
-      <button
-        wx:if="{{role === 'owner'}}"
-        class="btn-plain"
-        style="flex: 1;"
-        bindtap="handleShowJoinCode"
-        disabled="{{loading}}"
-      >
+    <view wx:if="{{role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
+      <button class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
         入房码
       </button>
-      <button
-        wx:if="{{role === 'owner'}}"
-        class="btn-danger"
-        style="flex: 1; margin-left: 14rpx;"
-        bindtap="handleDissolve"
-        disabled="{{loading}}"
-      >
+      <button class="btn-primary action-btn action-btn-gap" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+        分享邀请
+      </button>
+      <button class="btn-danger action-btn action-btn-gap" bindtap="handleDissolve" disabled="{{loading}}">
         解散房间
       </button>
+    </view>
 
-      <button
-        wx:else
-        class="btn-danger"
-        style="flex: 1;"
-        bindtap="handleLeave"
-        disabled="{{loading}}"
-      >
+    <view wx:else class="row action-row" style="margin-top: 18rpx;">
+      <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+        分享邀请
+      </button>
+      <button class="btn-danger action-btn action-btn-gap" bindtap="handleLeave" disabled="{{loading}}">
         退出房间
       </button>
     </view>
@@ -103,6 +93,21 @@
     <view class="title">扫码加入</view>
     <image class="qrcode" src="{{joinCodeUrl}}" mode="aspectFit" />
     <button class="btn-primary" style="margin-top: 16rpx;" bindtap="closeJoinCode">关闭</button>
+  </view>
+</view>
+
+<!-- 房主首次分享引导弹层 -->
+<view wx:if="{{showShareGuide}}" class="overlay" bindtap="closeShareGuide">
+  <view class="overlay-card share-guide-card" catchtap="noop">
+    <view class="title">邀请成员</view>
+    <view class="subtle" style="margin-top: 12rpx;">
+      当前请通过右上角“...”发起分享，发送给群聊或个人后可直接加入当前房间。
+    </view>
+
+    <view class="row share-guide-actions" style="margin-top: 22rpx;">
+      <button class="btn-primary" style="flex: 1;" bindtap="handleShareByMenuTip">如何分享</button>
+      <button class="btn-plain" style="flex: 1; margin-left: 14rpx;" bindtap="closeShareGuide">稍后</button>
+    </view>
   </view>
 </view>
 
