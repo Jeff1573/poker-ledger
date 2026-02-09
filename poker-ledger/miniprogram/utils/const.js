@@ -3,6 +3,9 @@
  * 说明：此版本已放弃微信云开发，改用自建 Node.js 后端。
  */
 module.exports = {
+  // 小程序日志级别：debug|info|warn|error（默认 info）
+  LOG_LEVEL: "info",
+
   // 后端 HTTP 基地址（生产环境必须为 HTTPS，并配置到小程序“request 合法域名”）
   // API_BASE_URL: "http://192.168.2.106:3000", // dev
   API_BASE_URL: "https://poker.mdice.top",   // pro

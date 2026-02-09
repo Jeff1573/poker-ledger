@@ -229,6 +229,14 @@ page {
   color: #34C759;
 }
 
+.tx-avatar {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 44rpx;
+  background: #E5E5EA;
+  flex-shrink: 0;
+}
+
 .transfer-name {
   font-size: 32rpx;
   font-weight: 600;

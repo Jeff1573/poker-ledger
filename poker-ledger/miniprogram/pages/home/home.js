@@ -460,12 +460,18 @@ Page({
 
   /**
    * 封装加入房间逻辑，并清空 pendingRoomCode，避免重复触发。
+   * 并发控制说明：
+   * - 通过 _joining 防重入，避免重复点击/重复自动触发导致并发请求
+   * - 不再使用 data.loading 作为“是否允许 join”的门禁，避免 bootstrap 期间被误拦截
    *
    * @param {string} roomCode
    */
   async joinRoomByCode(roomCode) {
-    if (this.data.loading) return;
-    this.setData({ loading: true });
+    if (this._joining) return;
+    this._joining = true;
+
+    const wasLoading = !!this.data.loading;
+    if (!wasLoading) this.setData({ loading: true });
 
     try {
       const app = getApp();
@@ -486,7 +492,8 @@ Page({
       console.error("加入房间失败", err);
       this.toast("加入失败，请稍后重试");
     } finally {
-      this.setData({ loading: false });
+      if (!wasLoading) this.setData({ loading: false });
+      this._joining = false;
     }
   },
 

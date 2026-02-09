@@ -4,6 +4,7 @@ const config = require("./config");
 const { ensureDir } = require("./db");
 const { openSqlite } = require("./sqlite");
 const { importFromJsonIfNeeded } = require("./sqliteImport");
+const logger = require("./logger");
 
 // 房间号字符集：去掉易混淆字符（0/O，1/I）
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -57,7 +58,14 @@ const db = openSqlite(SQLITE_FILE);
 // 首次迁移：SQLite 为空且存在旧 JSON 时，导入后备份旧文件。
 const importResult = importFromJsonIfNeeded(db, DB_FILE);
 if (!importResult.ok) {
-  console.error("SQLite 初始化失败：", importResult.message || "");
+  logger.error({
+    scope: "store",
+    event: "store.sqlite.init_fail",
+    msg: "SQLite 初始化失败",
+    extra: {
+      message: String(importResult.message || "")
+    }
+  });
   // 迁移失败时直接中止启动，避免误用空库导致“看似数据丢失”。
   throw new Error(importResult.message || "SQLite 初始化失败");
 }
@@ -99,7 +107,14 @@ function safeWrite(fn) {
       }
       return r;
     } catch (err) {
-      console.error("SQLite 写入异常：", err);
+      logger.error({
+        scope: "store",
+        event: "store.sqlite.write_exception",
+        msg: "SQLite 写入异常",
+        extra: {
+          errMsg: String((err && err.message) || err || "")
+        }
+      });
       return fail("INTERNAL_ERROR", "服务繁忙，请稍后重试");
     }
   });

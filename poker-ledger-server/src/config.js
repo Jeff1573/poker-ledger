@@ -25,5 +25,11 @@ module.exports = {
   DB_FILE: String(process.env.DB_FILE || ""),
 
   // SQLite 数据库文件路径（不设则默认 data/db.sqlite）
-  SQLITE_FILE: String(process.env.SQLITE_FILE || "")
+  SQLITE_FILE: String(process.env.SQLITE_FILE || ""),
+
+  // 日志级别：debug|info|warn|error（默认 info）
+  LOG_LEVEL: String(process.env.LOG_LEVEL || "info"),
+
+  // HTTP 访问日志开关：1 开启，0 关闭（默认开启）
+  LOG_HTTP_ACCESS: String(process.env.LOG_HTTP_ACCESS || "1") !== "0"
 };

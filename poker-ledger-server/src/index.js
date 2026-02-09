@@ -11,6 +11,7 @@ const store = require("./store");
 const { codeToOpenId } = require("./wechat");
 const { signToken, authMiddleware } = require("./auth");
 const { createWsHub } = require("./wsHub");
+const logger = require("./logger");
 
 const app = express();
 
@@ -20,6 +21,33 @@ app.use(
     limit: "1mb"
   })
 );
+
+// 访问日志中间件：为请求打上 reqId，并在响应完成后输出耗时。
+app.use((req, res, next) => {
+  req._reqId = makeReqId();
+  req._startAt = Date.now();
+
+  res.on("finish", () => {
+    if (!config.LOG_HTTP_ACCESS) return;
+    const durationMs = Date.now() - Number(req._startAt || Date.now());
+    logger.info({
+      scope: "http.access",
+      event: "http.access.done",
+      msg: "HTTP 请求完成",
+      reqId: String(req._reqId || ""),
+      openId: String(req.openId || ""),
+      durationMs,
+      extra: {
+        method: String(req.method || ""),
+        path: String(req.path || ""),
+        statusCode: Number(res.statusCode || 0),
+        ip: getClientIp(req)
+      }
+    });
+  });
+
+  next();
+});
 
 // 上传目录（用于头像等资源）
 const UPLOAD_ROOT = path.join(__dirname, "..", "data", "uploads");
@@ -66,6 +94,74 @@ function fail(res, code, message) {
 }
 
 /**
+ * 生成请求日志 ID，便于串联一次 HTTP 调用链路。
+ */
+function makeReqId() {
+  return `req_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+/**
+ * 读取客户端 IP（支持反向代理场景）。
+ *
+ * @param {import("express").Request} req
+ */
+function getClientIp(req) {
+  const xff = String(req.headers["x-forwarded-for"] || "").trim();
+  if (xff) return String(xff.split(",")[0] || "").trim();
+  return String(req.socket && req.socket.remoteAddress || "");
+}
+
+/**
+ * 输出路由业务日志（统一格式）。
+ *
+ * @param {import("express").Request} req
+ * @param {string} level
+ * @param {string} event
+ * @param {string} msg
+ * @param {any} extra
+ */
+function routeLog(req, level, event, msg, extra) {
+  let openId = String(req.openId || "");
+  let roomCode = "";
+  let safeExtra = extra;
+
+  if (extra && typeof extra === "object" && !Array.isArray(extra)) {
+    safeExtra = { ...extra };
+    if (Object.prototype.hasOwnProperty.call(safeExtra, "openId")) {
+      openId = String(safeExtra.openId || "");
+      delete safeExtra.openId;
+    }
+    if (Object.prototype.hasOwnProperty.call(safeExtra, "roomCode")) {
+      roomCode = String(safeExtra.roomCode || "");
+      delete safeExtra.roomCode;
+    }
+  }
+
+  const payload = {
+    scope: "http.biz",
+    event,
+    msg,
+    reqId: String(req._reqId || ""),
+    openId,
+    roomCode,
+    extra: safeExtra
+  };
+  if (level === "error") {
+    logger.error(payload);
+    return;
+  }
+  if (level === "warn") {
+    logger.warn(payload);
+    return;
+  }
+  if (level === "debug") {
+    logger.debug(payload);
+    return;
+  }
+  logger.info(payload);
+}
+
+/**
  * 上传头像：
  * - chooseAvatar 返回的是本地临时路径，必须上传到后端才能在房间内跨设备同步展示
  * - 返回 avatarPath（相对路径），前端展示时应通过 API_BASE_URL 拼接成完整 URL
@@ -74,8 +170,19 @@ app.post("/api/uploads/avatar", authMiddleware, upload.single("file"), async (re
   const openId = req.openId;
   const file = req.file;
 
-  if (!file) return fail(res, "NO_FILE", "未收到文件");
-  if (!ALLOWED_IMAGE_MIME.has(String(file.mimetype || ""))) return fail(res, "INVALID_FILE", "仅支持图片");
+  if (!file) {
+    routeLog(req, "warn", "avatar.upload.fail", "头像上传失败：未收到文件", {
+      code: "NO_FILE"
+    });
+    return fail(res, "NO_FILE", "未收到文件");
+  }
+  if (!ALLOWED_IMAGE_MIME.has(String(file.mimetype || ""))) {
+    routeLog(req, "warn", "avatar.upload.fail", "头像上传失败：文件类型不支持", {
+      code: "INVALID_FILE",
+      mime: String(file.mimetype || "")
+    });
+    return fail(res, "INVALID_FILE", "仅支持图片");
+  }
 
   const ext = extFromMime(String(file.mimetype || ""));
   const fileName = `${openId}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}.${ext}`;
@@ -83,6 +190,10 @@ app.post("/api/uploads/avatar", authMiddleware, upload.single("file"), async (re
 
   // 由于使用 memoryStorage，这里直接写入 buffer
   fs.writeFileSync(diskPath, file.buffer);
+
+  routeLog(req, "info", "avatar.upload.ok", "头像上传成功", {
+    size: Number(file.size || 0)
+  });
 
   return ok(res, { avatarPath: `/uploads/avatars/${fileName}` });
 });
@@ -92,15 +203,34 @@ app.post("/api/uploads/avatar", authMiddleware, upload.single("file"), async (re
  */
 app.post("/api/auth/wechat", async (req, res) => {
   const code = String((req.body && req.body.code) || "").trim();
-  if (!code) return fail(res, "INVALID_CODE", "缺少 code");
+  if (!code) {
+    routeLog(req, "warn", "auth.wechat.fail", "微信登录失败：缺少 code", {
+      code: "INVALID_CODE"
+    });
+    return fail(res, "INVALID_CODE", "缺少 code");
+  }
 
   const r = await codeToOpenId(code);
-  if (!r.ok) return fail(res, r.code, r.message);
+  if (!r.ok) {
+    routeLog(req, "warn", "auth.wechat.fail", "微信登录失败：code 换取 openid 失败", {
+      code: String(r.code || "")
+    });
+    return fail(res, r.code, r.message);
+  }
 
   const r2 = await store.ensureUserForLogin(r.openId);
-  if (!r2.ok) return fail(res, r2.code, r2.message);
+  if (!r2.ok) {
+    routeLog(req, "warn", "auth.wechat.fail", "微信登录失败：用户初始化失败", {
+      code: String(r2.code || ""),
+      openId: r.openId
+    });
+    return fail(res, r2.code, r2.message);
+  }
 
   const token = signToken(r.openId);
+  routeLog(req, "info", "auth.wechat.ok", "微信登录成功", {
+    openId: r.openId
+  });
   return ok(res, { token, openId: r.openId });
 });
 
@@ -115,7 +245,13 @@ app.post("/api/auth/deactivate", authMiddleware, async (req, res) => {
 
   const result = await store.deactivateUser(openId);
 
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "auth.deactivate.fail", "注销失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
+  routeLog(req, "info", "auth.deactivate.ok", "注销成功", {});
   return ok(res, { message: "注销成功" });
 });
 
@@ -124,8 +260,12 @@ app.post("/api/auth/deactivate", authMiddleware, async (req, res) => {
  */
 app.get("/api/me", authMiddleware, async (req, res) => {
   const openId = req.openId;
-
-  return ok(res, store.getMe(openId));
+  const me = store.getMe(openId);
+  routeLog(req, "debug", "me.fetch.ok", "获取我的信息成功", {
+    inRoom: !!me.inRoom,
+    roomCode: me.roomCode || ""
+  });
+  return ok(res, me);
 });
 
 /**
@@ -141,18 +281,37 @@ app.put("/api/users/profile", authMiddleware, async (req, res) => {
     : null;
   const displayName = String((req.body && req.body.displayName) || "").trim();
 
-  if (!displayName) return fail(res, "INVALID_DISPLAY_NAME", "昵称不能为空");
-  if (displayName.length > 20) return fail(res, "INVALID_DISPLAY_NAME", "昵称过长");
+  if (!displayName) {
+    routeLog(req, "warn", "profile.update.fail", "更新资料失败：昵称不能为空", {
+      code: "INVALID_DISPLAY_NAME"
+    });
+    return fail(res, "INVALID_DISPLAY_NAME", "昵称不能为空");
+  }
+  if (displayName.length > 20) {
+    routeLog(req, "warn", "profile.update.fail", "更新资料失败：昵称过长", {
+      code: "INVALID_DISPLAY_NAME"
+    });
+    return fail(res, "INVALID_DISPLAY_NAME", "昵称过长");
+  }
 
   const result = await store.updateUserProfile(openId, { nickNameWx, avatarUrlWx, displayName });
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "profile.update.fail", "更新资料失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
 
   // 如果用户在房间中,广播完整快照以同步成员资料更新
   const mapping = store.getUserRoom(openId);
   if (mapping && mapping.roomCode) {
+    routeLog(req, "info", "profile.update.broadcast_snapshot", "资料更新后广播房间快照", {
+      roomCode: mapping.roomCode
+    });
     wsHub.broadcastSnapshot(mapping.roomCode);
   }
 
+  routeLog(req, "info", "profile.update.ok", "更新资料成功", {});
   return ok(res, { user: result.user || null });
 });
 
@@ -164,7 +323,15 @@ app.post("/api/rooms/create", authMiddleware, async (req, res) => {
 
   const result = await store.createRoom(openId);
 
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "room.create.fail", "创建房间失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
+  routeLog(req, "info", "room.create.ok", "创建房间成功", {
+    roomCode: result.roomCode
+  });
   return ok(res, { roomCode: result.roomCode });
 });
 
@@ -174,14 +341,28 @@ app.post("/api/rooms/create", authMiddleware, async (req, res) => {
 app.post("/api/rooms/join", authMiddleware, async (req, res) => {
   const openId = req.openId;
   const roomCode = String((req.body && req.body.roomCode) || "").trim().toUpperCase();
-  if (!roomCode) return fail(res, "INVALID_ROOM_CODE", "请输入房间号");
+  if (!roomCode) {
+    routeLog(req, "warn", "room.join.fail", "加入房间失败：缺少房间号", {
+      code: "INVALID_ROOM_CODE"
+    });
+    return fail(res, "INVALID_ROOM_CODE", "请输入房间号");
+  }
 
   const result = await store.joinRoom(openId, roomCode);
 
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "room.join.fail", "加入房间失败", {
+      code: String(result.code || ""),
+      roomCode
+    });
+    return fail(res, result.code, result.message);
+  }
 
   // join 成功后由 WS 广播最新快照（这里先返回 HTTP，广播在下方统一处理）
   wsHub.broadcastSnapshot(result.roomCode);
+  routeLog(req, "info", "room.join.ok", "加入房间成功", {
+    roomCode: result.roomCode
+  });
   return ok(res, { roomCode: result.roomCode });
 });
 
@@ -191,7 +372,14 @@ app.post("/api/rooms/join", authMiddleware, async (req, res) => {
 app.get("/api/rooms/my", authMiddleware, async (req, res) => {
   const openId = req.openId;
   const mapping = store.getUserRoom(openId);
-  if (!mapping) return ok(res, { inRoom: false });
+  if (!mapping) {
+    routeLog(req, "debug", "room.my.empty", "用户当前不在房间中", {});
+    return ok(res, { inRoom: false });
+  }
+  routeLog(req, "debug", "room.my.ok", "获取当前房间成功", {
+    roomCode: mapping.roomCode,
+    role: mapping.role
+  });
   return ok(res, { inRoom: true, roomCode: mapping.roomCode, role: mapping.role });
 });
 
@@ -203,10 +391,27 @@ app.get("/api/rooms/:roomCode/snapshot", authMiddleware, async (req, res) => {
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
 
   const mapping = store.getUserRoom(openId);
-  if (!mapping || mapping.roomCode !== roomCode) return fail(res, "FORBIDDEN", "你不在该房间中");
+  if (!mapping || mapping.roomCode !== roomCode) {
+    routeLog(req, "warn", "room.snapshot.fail", "获取快照失败：无权限", {
+      code: "FORBIDDEN",
+      roomCode
+    });
+    return fail(res, "FORBIDDEN", "你不在该房间中");
+  }
 
   const snap = store.getRoomSnapshot(roomCode);
-  if (!snap) return fail(res, "ROOM_NOT_FOUND", "房间不存在");
+  if (!snap) {
+    routeLog(req, "warn", "room.snapshot.fail", "获取快照失败：房间不存在", {
+      code: "ROOM_NOT_FOUND",
+      roomCode
+    });
+    return fail(res, "ROOM_NOT_FOUND", "房间不存在");
+  }
+  routeLog(req, "debug", "room.snapshot.ok", "获取快照成功", {
+    roomCode,
+    memberCount: Array.isArray(snap.members) ? snap.members.length : 0,
+    txCount: Array.isArray(snap.txs) ? snap.txs.length : 0
+  });
   return ok(res, snap);
 });
 
@@ -218,8 +423,16 @@ app.post("/api/rooms/leave", authMiddleware, async (req, res) => {
 
   const result = await store.leaveRoom(openId);
 
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "room.leave.fail", "退出房间失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
   wsHub.broadcastSnapshot(result.roomCode);
+  routeLog(req, "info", "room.leave.ok", "退出房间成功", {
+    roomCode: result.roomCode
+  });
   return ok(res, {});
 });
 
@@ -232,15 +445,41 @@ app.post("/api/txs", authMiddleware, async (req, res) => {
   const note = String((req.body && req.body.note) || "").trim().slice(0, 50);
   const amount = Number((req.body && req.body.amount) || 0);
 
-  if (!toOpenId) return fail(res, "INVALID_TO", "请选择收款人");
-  if (toOpenId === fromOpenId) return fail(res, "INVALID_TO", "不能转给自己");
-  if (!Number.isInteger(amount)) return fail(res, "INVALID_AMOUNT", "金额必须为整数");
-  if (amount <= 0) return fail(res, "INVALID_AMOUNT", "金额必须大于 0");
-  if (amount > 99999999) return fail(res, "INVALID_AMOUNT", "金额过大");
+  if (!toOpenId) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败：缺少收款人", { code: "INVALID_TO" });
+    return fail(res, "INVALID_TO", "请选择收款人");
+  }
+  if (toOpenId === fromOpenId) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败：不能转给自己", { code: "INVALID_TO" });
+    return fail(res, "INVALID_TO", "不能转给自己");
+  }
+  if (!Number.isInteger(amount)) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败：金额非整数", {
+      code: "INVALID_AMOUNT"
+    });
+    return fail(res, "INVALID_AMOUNT", "金额必须为整数");
+  }
+  if (amount <= 0) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败：金额小于等于 0", {
+      code: "INVALID_AMOUNT"
+    });
+    return fail(res, "INVALID_AMOUNT", "金额必须大于 0");
+  }
+  if (amount > 99999999) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败：金额过大", {
+      code: "INVALID_AMOUNT"
+    });
+    return fail(res, "INVALID_AMOUNT", "金额过大");
+  }
 
   const result = await store.addTx(fromOpenId, toOpenId, amount, note);
 
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
 
   // 增量推送：如果返回了完整交易对象和总账，则推送增量更新；否则兜底推送完整快照
   if (result.tx && result.totals) {
@@ -248,6 +487,12 @@ app.post("/api/txs", authMiddleware, async (req, res) => {
   } else {
     wsHub.broadcastSnapshot(result.roomCode);
   }
+
+  routeLog(req, "info", "tx.add.ok", "新增交易成功", {
+    roomCode: result.roomCode,
+    txId: String(result.txId || ""),
+    amount
+  });
 
   return ok(res, { txId: result.txId });
 });
@@ -260,8 +505,17 @@ app.post("/api/rooms/dissolve", authMiddleware, async (req, res) => {
 
   const result = await store.dissolveRoom(openId);
 
-  if (!result.ok) return fail(res, result.code, result.message);
+  if (!result.ok) {
+    routeLog(req, "warn", "room.dissolve.fail", "解散房间失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
   wsHub.broadcastDissolved(result.roomCode, result.settlementId);
+  routeLog(req, "info", "room.dissolve.ok", "解散房间成功", {
+    roomCode: result.roomCode,
+    settlementId: result.settlementId
+  });
   return ok(res, { settlementId: result.settlementId });
 });
 
@@ -273,7 +527,16 @@ app.get("/api/settlements/:roomCode", authMiddleware, async (req, res) => {
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
 
   const r = store.getSettlement(openId, roomCode);
-  if (!r.ok) return fail(res, r.code, r.message);
+  if (!r.ok) {
+    routeLog(req, "warn", "settlement.fetch.fail", "获取结算失败", {
+      code: String(r.code || ""),
+      roomCode
+    });
+    return fail(res, r.code, r.message);
+  }
+  routeLog(req, "info", "settlement.fetch.ok", "获取结算成功", {
+    roomCode
+  });
   return ok(res, { settlement: r.settlement });
 });
 
@@ -284,6 +547,9 @@ app.get("/api/settlements/:roomCode", authMiddleware, async (req, res) => {
 app.get("/api/rooms/:roomCode/qrcode.png", async (req, res) => {
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
   if (!roomCode) {
+    routeLog(req, "warn", "room.qrcode.fail", "生成入房二维码失败：房间号为空", {
+      code: "INVALID_ROOM_CODE"
+    });
     res.status(400).end();
     return;
   }
@@ -297,7 +563,14 @@ app.get("/api/rooms/:roomCode/qrcode.png", async (req, res) => {
     });
     res.setHeader("Content-Type", "image/png");
     res.end(png);
+    routeLog(req, "debug", "room.qrcode.ok", "生成入房二维码成功", {
+      roomCode
+    });
   } catch (err) {
+    routeLog(req, "error", "room.qrcode.fail", "生成入房二维码异常", {
+      roomCode,
+      errMsg: String((err && err.message) || err || "")
+    });
     res.status(500).end();
   }
 });
@@ -308,5 +581,12 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 const wsHub = createWsHub({ wss, store });
 
 server.listen(config.PORT, () => {
-  console.log(`poker-ledger-server 已启动：http://127.0.0.1:${config.PORT}`);
+  logger.info({
+    scope: "server",
+    event: "server.start",
+    msg: "poker-ledger-server 已启动",
+    extra: {
+      port: config.PORT
+    }
+  });
 });

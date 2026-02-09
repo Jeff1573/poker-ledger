@@ -3,6 +3,7 @@ const { toUnsignedIntText, validateAmount } = require("../../utils/validator");
 const { formatTime } = require("../../utils/format");
 const { resolveApiAssetUrl } = require("../../utils/url");
 const storage = require("../../utils/storage");
+const log = require("../../utils/log");
 
 /**
  * 房间页职责：
@@ -86,11 +87,17 @@ Page({
   async enterRoom() {
     if (this._entering) return;
     this._entering = true;
+    log.info("room.enter.start", "开始进入房间", {
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode)
+    });
 
     try {
       const app = getApp();
       const session = await app.ensureSession();
       this.setData({ meOpenId: session.openId });
+      log.debug("room.enter.session_ready", "登录态准备完成", {
+        openIdMasked: log.maskOpenId(session.openId)
+      });
 
       const myRoom = await app.apiCall({ path: "/api/rooms/my", method: "GET" });
       if (!myRoom || !myRoom.ok) {
@@ -128,8 +135,15 @@ Page({
 
       // 2) 兜底拉一次快照（防止 WS 因网络问题未及时收到）
       await this.fetchSnapshot();
+      log.info("room.enter.success", "进入房间成功", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode)
+      });
     } catch (err) {
       console.error("enterRoom 失败", err);
+      log.error("room.enter.fail", "进入房间失败", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        errMsg: String((err && err.message) || err || "")
+      });
       this.toast("进入房间失败，请检查后端/网络");
       wx.redirectTo({ url: "/pages/home/home" });
     } finally {
@@ -147,9 +161,26 @@ Page({
         path: `/api/rooms/${this.data.roomCode}/snapshot`,
         method: "GET"
       });
-      if (r && r.ok) this.applySnapshot(r);
+      if (r && r.ok) {
+        this.applySnapshot(r);
+        log.debug("room.snapshot.ok", "房间快照同步完成", {
+          roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+          memberCount: Array.isArray(r.members) ? r.members.length : 0,
+          txCount: Array.isArray(r.txs) ? r.txs.length : 0
+        });
+      } else {
+        log.warn("room.snapshot.biz_fail", "房间快照业务失败", {
+          roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+          code: String((r && r.code) || ""),
+          message: String((r && r.message) || "")
+        });
+      }
     } catch (err) {
       // 兜底失败不影响 WS 正常工作
+      log.warn("room.snapshot.fail", "房间快照请求失败", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        errMsg: String((err && err.message) || err || "")
+      });
     }
   },
 
@@ -198,6 +229,10 @@ Page({
     const token = session.token;
 
     const url = `${String(CONST.WS_BASE_URL || "").replace(/\/$/, "")}/ws?token=${encodeURIComponent(token)}`;
+    log.info("ws.connect.start", "开始建立 WebSocket 连接", {
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+      tokenMasked: log.maskToken(token)
+    });
     const task = wx.connectSocket({ url });
     this._socket = task;
     this._socketOpen = false;
@@ -205,6 +240,9 @@ Page({
     task.onOpen(() => {
       this._socketOpen = true;
       this._reconnectAttempt = 0;
+      log.info("ws.connect.open", "WebSocket 已连接", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode)
+      });
       this.sendWs({ type: "subscribe", roomCode: this.data.roomCode });
     });
 
@@ -212,14 +250,23 @@ Page({
       this.handleWsMessage(msg);
     });
 
-    task.onClose(() => {
+    task.onClose((event) => {
       this._socketOpen = false;
+      log.warn("ws.connect.close", "WebSocket 已关闭", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        code: Number((event && event.code) || 0),
+        reason: String((event && event.reason) || "")
+      });
       if (this._pageActive) this.scheduleReconnect();
     });
 
     task.onError((err) => {
       // onError 通常会伴随 onClose，这里只做日志
       console.error("WebSocket 错误", err);
+      log.error("ws.connect.error", "WebSocket 连接异常", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        errMsg: String((err && err.errMsg) || "")
+      });
     });
   },
 
@@ -230,6 +277,7 @@ Page({
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
+      log.debug("ws.reconnect.cancel", "已取消重连定时器");
     }
     if (this._socket) {
       try {
@@ -248,11 +296,22 @@ Page({
    * @param {any} payload
    */
   sendWs(payload) {
-    if (!this._socket || !this._socketOpen) return;
+    if (!this._socket || !this._socketOpen) {
+      log.debug("ws.send.skip", "WebSocket 未连接，忽略发送", {
+        type: String(payload && payload.type || "")
+      });
+      return;
+    }
+    const type = String((payload && payload.type) || "");
+    log.debug("ws.send", "发送 WebSocket 消息", { type });
     try {
       this._socket.send({ data: JSON.stringify(payload) });
     } catch (err) {
       // ignore
+      log.warn("ws.send.fail", "发送 WebSocket 消息失败", {
+        type,
+        errMsg: String((err && err.message) || err || "")
+      });
     }
   },
 
@@ -269,6 +328,13 @@ Page({
       return;
     }
     if (!data || !data.type) return;
+    const type = String(data.type || "");
+    log.debug("ws.recv", "收到 WebSocket 消息", {
+      type,
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+      memberCount: type === "room_snapshot" && Array.isArray(data.members) ? data.members.length : undefined,
+      txCount: type === "room_snapshot" && Array.isArray(data.txs) ? data.txs.length : undefined
+    });
 
     // 增量推送：新增交易
     if (data.type === "tx_added") {
@@ -345,10 +411,19 @@ Page({
     const attempt = Number(this._reconnectAttempt || 0);
     const delay = Math.min(10000, 1000 * Math.pow(2, attempt));
     this._reconnectAttempt = attempt + 1;
+    log.warn("ws.reconnect.schedule", "计划重连 WebSocket", {
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+      attempt: this._reconnectAttempt,
+      delayMs: delay
+    });
 
     this._reconnectTimer = setTimeout(async () => {
       this._reconnectTimer = null;
       if (!this._pageActive) return;
+      log.info("ws.reconnect.try", "开始执行 WebSocket 重连", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        attempt: this._reconnectAttempt
+      });
 
       // 若期间用户已退出房间，则不再重连
       try {
@@ -360,6 +435,9 @@ Page({
         }
       } catch (err) {
         // ignore
+        log.warn("ws.reconnect.precheck.fail", "重连前房间状态检查失败", {
+          errMsg: String((err && err.message) || err || "")
+        });
       }
 
       this.startSocket();
@@ -528,8 +606,17 @@ Page({
 
     const toOpenId = String(this.data.transferToOpenId || "").trim();
     const amount = Number(this.data.transferAmountText);
+    log.info("tx.submit.start", "开始提交转账", {
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+      toOpenIdMasked: log.maskOpenId(toOpenId),
+      amount
+    });
     const v = validateAmount(amount);
     if (!v.ok) {
+      log.warn("tx.submit.invalid", "转账金额校验失败", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        amount
+      });
       this.toast(v.message);
       return;
     }
@@ -543,14 +630,32 @@ Page({
         data: { toOpenId, amount: v.amount, note: "" }
       });
       if (!r || !r.ok) {
+        log.warn("tx.submit.biz_fail", "转账业务失败", {
+          roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+          code: String((r && r.code) || ""),
+          message: String((r && r.message) || "")
+        });
         this.toast((r && r.message) || "转账失败");
         return;
       }
 
       this.closeTransferModal();
+      // WS 可能因弱网短暂断开，转账成功后补拉一次快照，确保金额/记录最终一致。
+      await this.fetchSnapshot();
+      log.info("tx.submit.success", "转账提交成功并完成兜底快照", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        toOpenIdMasked: log.maskOpenId(toOpenId),
+        amount
+      });
       wx.showToast({ title: "已记录", icon: "success" });
     } catch (err) {
       console.error("transfer 失败", err);
+      log.error("tx.submit.fail", "转账提交失败", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        toOpenIdMasked: log.maskOpenId(toOpenId),
+        amount,
+        errMsg: String((err && err.message) || err || "")
+      });
       this.toast("转账失败，请稍后重试");
     } finally {
       this.setData({ loading: false });

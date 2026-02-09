@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const config = require("./config");
+const logger = require("./logger");
 
 /**
  * 生成 JWT（用于 HTTP 与 WebSocket 鉴权）。
@@ -44,13 +45,39 @@ function authMiddleware(req, res, next) {
   const auth = String(req.headers.authorization || "");
   const m = auth.match(/^Bearer\s+(.+)$/i);
   const token = m && m[1];
-  const openId = token ? verifyToken(token) : null;
+  const reqId = String(req._reqId || "");
 
-  if (!openId) {
+  if (!m) {
+    logger.warn({
+      scope: "auth",
+      event: "auth.fail.missing_bearer",
+      msg: "缺少 Authorization Bearer",
+      reqId
+    });
     res.status(401).json({ ok: false, code: "UNAUTHORIZED", message: "未登录或登录已过期" });
     return;
   }
 
+  const openId = token ? verifyToken(token) : null;
+
+  if (!openId) {
+    logger.warn({
+      scope: "auth",
+      event: "auth.fail.invalid_token",
+      msg: "JWT 校验失败",
+      reqId
+    });
+    res.status(401).json({ ok: false, code: "UNAUTHORIZED", message: "未登录或登录已过期" });
+    return;
+  }
+
+  logger.debug({
+    scope: "auth",
+    event: "auth.ok",
+    msg: "鉴权通过",
+    reqId,
+    openId
+  });
   req.openId = openId;
   next();
 }
@@ -60,4 +87,3 @@ module.exports = {
   verifyToken,
   authMiddleware
 };
-
