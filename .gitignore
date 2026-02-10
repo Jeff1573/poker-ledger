@@ -3,4 +3,5 @@ data/*
 poker-ledger-server/data/
 .env.*
 .env
+!.env.example
 poker-ledger-server/Caddyfile
