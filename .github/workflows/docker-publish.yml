@@ -90,3 +90,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub overview
+        # 仅在 main 与版本标签发布时更新镜像说明，避免分支内容误覆盖
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          short-description: 打牌记账小程序后端镜像（Node.js + WebSocket + SQLite）
+          readme-filepath: ./poker-ledger-server/DOCKER_HUB_OVERVIEW.md
