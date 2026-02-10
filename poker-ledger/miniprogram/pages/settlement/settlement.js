@@ -1,5 +1,6 @@
 const { formatTime } = require("../../utils/format");
 const { resolveApiAssetUrl } = require("../../utils/url");
+const LEADERBOARD_PREVIEW_LIMIT = 10;
 
 /**
  * 将胜率格式化为百分比文本。
@@ -111,7 +112,7 @@ Page({
     try {
       const app = getApp();
       const r = await app.apiCall({
-        path: "/api/leaderboard?limit=10",
+        path: `/api/leaderboard?limit=${LEADERBOARD_PREVIEW_LIMIT}`,
         method: "GET"
       });
 
@@ -124,7 +125,8 @@ Page({
         return;
       }
 
-      const rows = (r.leaderboard.rows || []).map((item) => {
+      // 防御性裁剪：即使后端返回超过 10 条，这里也只展示 Top 10。
+      const rows = (r.leaderboard.rows || []).slice(0, LEADERBOARD_PREVIEW_LIMIT).map((item) => {
         const netProfit = Number(item.netProfit || 0);
         return {
           rank: Number(item.rank || 0),

@@ -1,3 +1,20 @@
+page {
+  overflow: hidden;
+}
+
+.settlement-page {
+  height: calc(100vh - 48rpx - constant(safe-area-inset-bottom));
+  height: calc(100vh - 48rpx - env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.settlement-container {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .item-row {
   padding: 16rpx 0;
   border-bottom: 2rpx solid rgba(60, 60, 67, 0.12);
@@ -9,6 +26,40 @@
 
 .leaderboard-btn {
   margin-left: 20rpx;
+}
+
+.leaderboard-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.leaderboard-scroll {
+  margin-top: 18rpx;
+  flex: 1;
+  min-height: 0;
+}
+
+.leaderboard-scroll-inner {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.leaderboard-list {
+  flex-shrink: 0;
+}
+
+.leaderboard-footer {
+  margin-top: 12rpx;
+  text-align: center;
+}
+
+.leaderboard-bottom-spacer {
+  height: calc(24rpx + constant(safe-area-inset-bottom));
+  height: calc(24rpx + env(safe-area-inset-bottom));
+  flex-shrink: 0;
 }
 
 .rank {
