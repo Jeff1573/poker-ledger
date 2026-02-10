@@ -1,7 +1,7 @@
 /** 全局样式：尽量贴近 iOS 常见 App 的清爽风格 */
 page {
-  background: #F2F2F7;
-  color: #1C1C1E;
+  background: #F7F2E9;
+  color: #1E2F2A;
   font-size: 32rpx;
   box-sizing: border-box;
   padding: 24rpx;
@@ -14,43 +14,49 @@ page {
 .container {
   display: flex;
   flex-direction: column;
-  gap: 18rpx;
-  /* width: 100vw; */
+  gap: 20rpx;
 }
 
 .card {
-  background: #FFFFFF;
-  border-radius: 20rpx;
+  background: rgba(255, 253, 248, 0.96);
+  border: 2rpx solid rgba(33, 93, 77, 0.11);
+  border-radius: 24rpx;
   padding: 24rpx;
-  box-shadow: 0 6rpx 18rpx rgba(0, 0, 0, 0.06);
-
-}
-
-.card+.card {
-  /* margin-top: 18rpx;
-  margin-bottom: 18rpx; */
+  box-shadow: 0 10rpx 24rpx rgba(24, 69, 57, 0.08);
 }
 
 .title {
   font-size: 36rpx;
-  font-weight: 600;
+  font-weight: 700;
+  color: #1E2F2A;
 }
 
 .subtle {
-  color: #8E8E93;
+  color: #687974;
   font-size: 26rpx;
+  line-height: 1.45;
 }
 
 .btn-primary {
-  background: #007AFF;
-  color: #FFFFFF;
-  border-radius: 16rpx;
+  background: linear-gradient(135deg, #2E8B73 0%, #1F6C59 100%);
+  color: #F8F3E7;
+  border-radius: 18rpx;
+  border: none;
+  font-weight: 700;
+}
+
+/* 统一禁用态可读性：避免深色底上的低对比文字 */
+.btn-primary[disabled] {
+  background: linear-gradient(135deg, #A8CABC 0%, #90B8A8 100%);
+  color: rgba(30, 47, 42, 0.62);
+  opacity: 1;
 }
 
 .btn-danger {
-  background: #FF3B30;
+  background: #C93B2E;
   color: #FFFFFF;
-  border-radius: 16rpx;
+  border-radius: 18rpx;
+  border: none;
   width: 100%;
   height: 80rpx;
   font-size: 36rpx !important;
@@ -60,17 +66,19 @@ page {
 }
 
 .btn-plain {
-  background: #FFFFFF;
-  color: #007AFF;
-  border: 2rpx solid rgba(0, 122, 255, 0.35);
-  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.82);
+  color: #236F5D;
+  border: 2rpx solid rgba(35, 111, 93, 0.32);
+  border-radius: 18rpx;
 }
 
 .input {
-  background: #F2F2F7;
-  border-radius: 16rpx;
+  background: #F2ECDD;
+  border: 2rpx solid rgba(35, 111, 93, 0.14);
+  border-radius: 18rpx;
   padding: 20rpx;
   font-size: 32rpx;
+  color: #1E2F2A;
 }
 
 .row {

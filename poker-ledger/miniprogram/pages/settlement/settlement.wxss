@@ -66,14 +66,14 @@ page {
   width: 84rpx;
   font-size: 24rpx;
   font-weight: 700;
-  color: #8E8E93;
+  color: #687974;
 }
 
 .avatar {
   width: 64rpx;
   height: 64rpx;
   border-radius: 32rpx;
-  background: #E5E5EA;
+  background: #E8E1D2;
 }
 
 .name-wrap {
@@ -92,7 +92,7 @@ page {
 .rate {
   font-size: 30rpx;
   font-weight: 700;
-  color: #007AFF;
+  color: #236F5D;
 }
 
 .badge {
@@ -101,8 +101,8 @@ page {
   padding: 2rpx 10rpx;
   border-radius: 999rpx;
   font-size: 20rpx;
-  background: rgba(0, 122, 255, 0.12);
-  color: #007AFF;
+  background: rgba(35, 111, 93, 0.12);
+  color: #236F5D;
 }
 
 .amount {
@@ -111,13 +111,13 @@ page {
 }
 
 .plus {
-  color: #34C759;
+  color: #2E8B73;
 }
 
 .minus {
-  color: #FF3B30;
+  color: #C93B2E;
 }
 
 .zero {
-  color: #8E8E93;
+  color: #687974;
 }

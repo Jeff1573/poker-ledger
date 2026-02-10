@@ -8,10 +8,10 @@
   ],
   "window": {
     "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#F2F2F7",
+    "navigationBarBackgroundColor": "#F7F2E9",
     "navigationBarTitleText": "打牌记账",
     "navigationBarTextStyle": "black",
-    "backgroundColor": "#F2F2F7"
+    "backgroundColor": "#F7F2E9"
   }
 }
 

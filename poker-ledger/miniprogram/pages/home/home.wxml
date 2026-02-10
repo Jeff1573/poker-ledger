@@ -1,35 +1,73 @@
-<view class="container">
-  <!-- 授权登录  -->
-  <view class="card profile-card">
-    <view class="row-between">
+<view class="container home-page {{hasProfile ? 'home-auth' : 'home-guest'}}">
+  <!-- 顶部视觉区：使用纯 WXSS 构建通用牌桌主题，不引入图片资源 -->
+  <view class="hero-shell">
+    <view class="hero-deco hero-glow-a"></view>
+    <view class="hero-deco hero-glow-b"></view>
+
+    <view class="row-between hero-head">
       <view>
-        <view class="title">打牌记账</view>
-        <view class="subtle" style="margin-top: 10rpx;">房主创建房间，成员可输入房间号或扫码加入</view>
+        <view class="hero-title">打牌记账</view>
+        <view class="hero-subtle">创建房间快速记账，输入房间号或扫码加入</view>
       </view>
 
-      <view style="display: flex; flex-direction: column; gap: 10rpx;">
-        <button class="btn-plain" size="mini" bindtap="goProfile">资料</button>
-        <button class="btn-plain" size="mini" bindtap="goLeaderboard">总榜</button>
+      <view class="hero-actions">
+        <button class="btn-plain hero-action-btn" size="mini" bindtap="goProfile">资料</button>
+        <button class="btn-plain hero-action-btn" size="mini" bindtap="goLeaderboard">总榜</button>
       </view>
     </view>
 
-    <view style="margin-top: 22rpx;">
-      <view wx:if="{{hasProfile}}" class="row profile-row">
-        <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
-        <view style="margin-left: 18rpx;">
-          <view class="name">{{user.displayName}}</view>
-          <view class="subtle">默认微信头像昵称，可在“资料”里改昵称</view>
+    <!-- 通用牌桌元素：筹码 + 花色 + 记分线 -->
+    <view class="table-mix">
+      <view class="chip-group">
+        <view class="chip chip-high">100</view>
+        <view class="chip chip-mid">50</view>
+        <view class="chip chip-low">10</view>
+      </view>
+
+      <view class="suit-group">
+        <view class="suit suit-spade">♠</view>
+        <view class="suit suit-heart">♥</view>
+        <view class="suit suit-club">♣</view>
+      </view>
+
+      <view class="score-track">
+        <view class="score-label">本局走势</view>
+        <view class="track-line">
+          <view class="track-seg seg-a"></view>
+          <view class="track-seg seg-b"></view>
+          <view class="track-seg seg-c"></view>
+        </view>
+        <view class="score-end">+128</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="auth-stage">
+    <!-- 授权卡片：保持自然流式间距，不做居中悬浮 -->
+    <view class="card profile-card auth-card">
+      <view wx:if="{{hasProfile}}">
+        <view class="title">欢迎回来</view>
+        <view class="subtle" style="margin-top: 10rpx;">默认微信头像昵称，可在“资料”里改昵称</view>
+
+        <view class="row profile-row" style="margin-top: 20rpx;">
+          <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
+          <view style="margin-left: 18rpx;">
+            <view class="name">{{user.displayName}}</view>
+            <view class="subtle">已可创建房间或加入房间</view>
+          </view>
         </view>
       </view>
 
       <view wx:else>
+        <view class="title">开始记账</view>
+
         <!-- 推荐方案：chooseAvatar + nickname（均需用户主动操作/输入） -->
         <view wx:if="{{supportChooseAvatar}}">
-          <view class="subtle">请选择头像并输入昵称（用于房间内展示）</view>
+          <view class="subtle" style="margin-top: 10rpx;">请选择头像并输入昵称（用于房间内展示）</view>
 
-          <view class="row auth-row" style="margin-top: 18rpx;">
+          <view class="row auth-row" style="margin-top: 20rpx;">
             <image class="avatar" src="{{draftAvatarLocal}}" mode="aspectFill" />
-            <button  class="btn-plain auth-btn" open-type="chooseAvatar" bindchooseavatar="handleChooseAvatar" disabled="{{loading}}">
+            <button class="btn-plain auth-btn" open-type="chooseAvatar" bindchooseavatar="handleChooseAvatar" disabled="{{loading}}">
               选择头像
             </button>
           </view>
@@ -42,7 +80,7 @@
         </view>
 
         <!-- 兼容兜底：老版本不支持 chooseAvatar 时回退到 getUserProfile（仍需按钮点击触发） -->
-        <view wx:else class="row-between">
+        <view wx:else class="row-between legacy-auth" style="margin-top: 20rpx;">
           <view>
             <view class="name">需要授权</view>
             <view class="subtle">用于显示房间成员头像和昵称</view>
@@ -52,8 +90,9 @@
       </view>
     </view>
   </view>
+
   <!-- 房间创建/加入 -->
-  <view class="card" wx:if="{{hasProfile}}">
+  <view class="card room-card" wx:if="{{hasProfile}}">
     <view class="title">房间</view>
 
     <view class="row" style="margin-top: 18rpx;">
@@ -79,6 +118,7 @@
       规则：每个成员/房主只能在一个房间中；加入新房间前需先退出当前房间。
     </view>
   </view>
+
   <!-- 注销 -->
-  <button wx:if="{{hasProfile}}" class="btn-danger" size="mini" bindtap="handleLogout">注销</button>
+  <button wx:if="{{hasProfile}}" class="btn-danger logout-btn" size="mini" bindtap="handleLogout">注销</button>
 </view>

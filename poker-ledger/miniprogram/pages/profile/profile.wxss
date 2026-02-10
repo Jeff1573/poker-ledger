@@ -19,12 +19,14 @@
   width: 96rpx;
   height: 96rpx;
   border-radius: 48rpx;
-  background: #E5E5EA;
+  background: #E8E1D2;
+  border: 2rpx solid rgba(35, 111, 93, 0.16);
 }
 
 .name {
   font-size: 34rpx;
   font-weight: 600;
+  color: #1E2F2A;
 }
 
 .history-card {

@@ -1,3 +1,230 @@
+.home-page {
+  min-height: calc(100vh - 48rpx);
+}
+
+.hero-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 30rpx;
+  padding: 28rpx 24rpx 40rpx;
+  background: linear-gradient(135deg, #2E866F 0%, #287863 46%, #3A9A7E 100%);
+  box-shadow: 0 20rpx 40rpx rgba(24, 74, 61, 0.22);
+  animation: hero-fade-in 420ms ease-out both;
+}
+
+.hero-head {
+  align-items: flex-start;
+  position: relative;
+  z-index: 2;
+}
+
+.hero-title {
+  font-size: 52rpx;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #F9F5EC;
+  letter-spacing: 1rpx;
+}
+
+.hero-subtle {
+  margin-top: 10rpx;
+  max-width: 430rpx;
+  color: rgba(249, 245, 236, 0.9);
+  font-size: 25rpx;
+  line-height: 1.45;
+}
+
+.hero-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.hero-action-btn {
+  min-width: 118rpx;
+  background: rgba(255, 255, 255, 0.14);
+  color: #F9F5EC;
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+/* 头图主体：使用 grid 组织通用牌桌元素，避免绝对定位带来的适配问题 */
+.table-mix {
+  position: relative;
+  z-index: 2;
+  margin-top: 28rpx;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(182rpx, 222rpx);
+  grid-template-rows: auto auto;
+  align-items: end;
+  gap: 16rpx 16rpx;
+}
+
+.chip-group {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 10rpx;
+}
+
+.chip {
+  width: 88rpx;
+  height: 88rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.62);
+  color: #FDF9F0;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10rpx 18rpx rgba(13, 49, 39, 0.22);
+}
+
+.chip-high {
+  border-radius: 88rpx;
+  background: radial-gradient(circle at 34% 26%, #4AAE90 0%, #2E866F 66%, #245F4F 100%);
+}
+
+.chip-mid {
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 76rpx;
+  background: radial-gradient(circle at 34% 26%, #75C6AF 0%, #3D9B80 64%, #2A6F5A 100%);
+  transform: translateY(8rpx);
+}
+
+.chip-low {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 64rpx;
+  font-size: 24rpx;
+  background: radial-gradient(circle at 34% 26%, #E3B88A 0%, #B98653 62%, #936942 100%);
+  transform: translateY(14rpx);
+}
+
+.suit-group {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10rpx;
+}
+
+.suit {
+  width: 58rpx;
+  height: 70rpx;
+  border-radius: 18rpx;
+  background: rgba(246, 240, 228, 0.92);
+  border: 2rpx solid rgba(255, 255, 255, 0.38);
+  box-shadow: 0 8rpx 16rpx rgba(13, 49, 39, 0.2);
+  font-size: 36rpx;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.suit-spade,
+.suit-club {
+  color: #2A6453;
+}
+
+.suit-heart {
+  color: #C93B2E;
+}
+
+.score-track {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.score-label {
+  color: rgba(249, 245, 236, 0.86);
+  font-size: 20rpx;
+  white-space: nowrap;
+}
+
+.track-line {
+  min-width: 0;
+  height: 8rpx;
+  padding: 2rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.26);
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+}
+
+.track-seg {
+  flex: 1;
+  height: 4rpx;
+  border-radius: 999rpx;
+}
+
+.seg-a {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.seg-b {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.seg-c {
+  background: #F9F5EC;
+}
+
+.score-end {
+  color: #F9F5EC;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.hero-deco {
+  position: absolute;
+  border-radius: 999rpx;
+  pointer-events: none;
+}
+
+.hero-glow-a {
+  width: 340rpx;
+  height: 340rpx;
+  top: -132rpx;
+  right: -96rpx;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.hero-glow-b {
+  width: 220rpx;
+  height: 220rpx;
+  left: -72rpx;
+  bottom: -86rpx;
+  background: rgba(201, 59, 46, 0.18);
+}
+
+.auth-stage {
+  /* 使用 flex 承载卡片，避免 width:100% + 内边距造成的右侧溢出 */
+  margin-top: 0;
+  position: relative;
+  z-index: 5;
+  display: flex;
+}
+
+.home-guest .auth-stage {
+  min-height: 0;
+}
+
+.auth-card {
+  flex: 1;
+  min-width: 0;
+  animation: auth-card-up 460ms ease-out both;
+}
+
 .profile-card {
   padding-bottom: 28rpx;
 }
@@ -10,20 +237,30 @@
   width: 96rpx;
   height: 96rpx;
   border-radius: 48rpx;
-  background: #E5E5EA;
+  background: #E8E1D2;
 }
 
 .auth-row {
+  display: flex;
   align-items: center;
+  gap: 14rpx;
 }
 
 .auth-btn {
-  margin-left: 14rpx;
+  margin-left: 0;
+}
+
+.legacy-auth {
+  align-items: flex-start;
 }
 
 .name {
   font-size: 34rpx;
   font-weight: 600;
+}
+
+.room-card {
+  margin-top: 4rpx;
 }
 
 .join-row {
@@ -37,4 +274,32 @@
 .join-btn {
   margin-left: 14rpx;
   width: 176rpx;
+}
+
+.logout-btn {
+  margin-top: 2rpx;
+}
+
+@keyframes hero-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(16rpx);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes auth-card-up {
+  0% {
+    opacity: 0;
+    transform: translateY(22rpx);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

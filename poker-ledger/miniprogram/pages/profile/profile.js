@@ -329,47 +329,25 @@ Page({
   },
 
   /**
-   * 如果用户还没授权，可在这里补一次授权。
-   * 注意：wx.getUserProfile 必须由用户点击触发。
+   * 未授权时统一回到首页进行授权。
+   * 原因：授权流程已收敛到首页（chooseAvatar + nickname），资料页不再直接调授权接口。
    */
-  async handleAuth() {
-    if (this.data.loading) return;
-    this.setData({ loading: true });
+  handleAuth() {
+    const pages = getCurrentPages();
+    const prevPage = pages.length > 1 ? pages[pages.length - 2] : null;
 
-    try {
-      const profileRes = await new Promise((resolve, reject) => {
-        wx.getUserProfile({
-          desc: "用于显示房间成员头像和昵称",
-          success: resolve,
-          fail: reject
-        });
-      });
-
-      const userInfo = (profileRes && profileRes.userInfo) || {};
-      const nickNameWx = String(userInfo.nickName || "").trim();
-      const avatarUrlWx = String(userInfo.avatarUrl || "").trim();
-      const displayName = nickNameWx;
-
-      const app = getApp();
-      const saveRes = await app.apiCall({
-        path: "/api/users/profile",
-        method: "PUT",
-        data: { nickNameWx, avatarUrlWx, displayName }
-      });
-
-      if (!saveRes || !saveRes.ok) {
-        wx.showToast({
-          title: (saveRes && saveRes.message) || "保存资料失败",
-          icon: "none"
-        });
-        return;
-      }
-
-      await this.loadProfile();
-    } catch (err) {
-      // 用户取消授权属于正常场景
-    } finally {
-      this.setData({ loading: false });
+    // 常见路径：从首页进入资料页，直接返回即可看到首页授权卡片。
+    if (prevPage && prevPage.route === "pages/home/home") {
+      wx.navigateBack();
+      return;
     }
+
+    // 兜底路径：若资料页不是从首页进入，直接跳首页。
+    wx.redirectTo({
+      url: "/pages/home/home",
+      fail: () => {
+        wx.reLaunch({ url: "/pages/home/home" });
+      }
+    });
   }
 });
