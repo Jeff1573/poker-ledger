@@ -15,6 +15,8 @@ const TX_PAGE_DEFAULT_LIMIT = 100;
 const TX_PAGE_MAX_LIMIT = 100;
 const LEADERBOARD_DEFAULT_LIMIT = 100;
 const LEADERBOARD_MAX_LIMIT = 200;
+const HISTORY_DEFAULT_LIMIT = 20;
+const HISTORY_MAX_LIMIT = 50;
 const LEADERBOARD_BACKFILL_META_KEY = "leaderboard_backfilled_v1";
 
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -208,6 +210,18 @@ function normalizeLeaderboardLimit(limit) {
 }
 
 /**
+ * 历史分页条数归一化。
+ *
+ * @param {any} limit
+ * @returns {number}
+ */
+function normalizeHistoryLimit(limit) {
+  const n = Number(limit || 0);
+  if (!Number.isInteger(n) || n <= 0) return HISTORY_DEFAULT_LIMIT;
+  return Math.min(HISTORY_MAX_LIMIT, n);
+}
+
+/**
  * 胜率计算：平局不计分母。
  *
  * @param {number} winCount
@@ -257,6 +271,53 @@ function queryRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit) {
   }
 
   return { txs, hasMore, nextBeforeCreatedAt, nextBeforeId };
+}
+
+/**
+ * 查询“我参与过的历史结算”分页（dissolvedAt/roomCode 双游标）。
+ *
+ * @param {string} openId
+ * @param {number|null} beforeDissolvedAt
+ * @param {string|null} beforeRoomCode
+ * @param {number} limit
+ * @returns {{rows:any[], hasMore:boolean, nextBeforeDissolvedAt:number|null, nextBeforeRoomCode:string|null}}
+ */
+function queryMySettlementHistoryPage(openId, beforeDissolvedAt, beforeRoomCode, limit) {
+  const oid = String(openId || "");
+  const pageLimit = normalizeHistoryLimit(limit);
+  const fetchLimit = pageLimit + 1;
+
+  const cursorDissolvedAt = Number(beforeDissolvedAt || 0);
+  const cursorRoomCode = normalizeRoomCode(beforeRoomCode);
+  const hasCursor = Number.isInteger(cursorDissolvedAt) && cursorDissolvedAt > 0 && !!cursorRoomCode;
+
+  const rows = hasCursor
+    ? stmt.listMySettlementHistoryBefore.all(oid, cursorDissolvedAt, cursorDissolvedAt, cursorRoomCode, fetchLimit)
+    : stmt.listMySettlementHistoryLatest.all(oid, fetchLimit);
+
+  const pageRows = rows.slice(0, pageLimit).map((row) => ({
+    settlementId: normalizeRoomCode(row.roomCode),
+    roomCode: normalizeRoomCode(row.roomCode),
+    dissolvedAt: Number(row.dissolvedAt || 0),
+    txCount: Number(row.txCount || 0),
+    myAmount: Number(row.myAmount || 0)
+  }));
+  const hasMore = rows.length > pageLimit;
+
+  let nextBeforeDissolvedAt = null;
+  let nextBeforeRoomCode = null;
+  if (hasMore && pageRows.length > 0) {
+    const tail = pageRows[pageRows.length - 1];
+    nextBeforeDissolvedAt = Number(tail.dissolvedAt || 0);
+    nextBeforeRoomCode = String(tail.roomCode || "");
+  }
+
+  return {
+    rows: pageRows,
+    hasMore,
+    nextBeforeDissolvedAt,
+    nextBeforeRoomCode
+  };
 }
 
 const stmt = {
@@ -335,6 +396,23 @@ const stmt = {
     "INSERT OR REPLACE INTO settlement_members(roomCode, seq, openId, displayName, avatarUrl, role, active) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ),
   getSettlement: db.prepare("SELECT roomCode, ownerOpenId, txCount, dissolvedAt FROM settlements WHERE roomCode = ?"),
+  getSettlementMemberByOpenId: db.prepare("SELECT roomCode, openId FROM settlement_members WHERE roomCode = ? AND openId = ?"),
+  listMySettlementHistoryLatest: db.prepare(
+    "SELECT s.roomCode, s.dissolvedAt, s.txCount, COALESCE(st.total, 0) AS myAmount " +
+      "FROM settlement_members sm " +
+      "INNER JOIN settlements s ON s.roomCode = sm.roomCode " +
+      "LEFT JOIN settlement_totals st ON st.roomCode = sm.roomCode AND st.openId = sm.openId " +
+      "WHERE sm.openId = ? " +
+      "ORDER BY s.dissolvedAt DESC, s.roomCode DESC LIMIT ?"
+  ),
+  listMySettlementHistoryBefore: db.prepare(
+    "SELECT s.roomCode, s.dissolvedAt, s.txCount, COALESCE(st.total, 0) AS myAmount " +
+      "FROM settlement_members sm " +
+      "INNER JOIN settlements s ON s.roomCode = sm.roomCode " +
+      "LEFT JOIN settlement_totals st ON st.roomCode = sm.roomCode AND st.openId = sm.openId " +
+      "WHERE sm.openId = ? AND (s.dissolvedAt < ? OR (s.dissolvedAt = ? AND s.roomCode < ?)) " +
+      "ORDER BY s.dissolvedAt DESC, s.roomCode DESC LIMIT ?"
+  ),
   listSettlements: db.prepare("SELECT roomCode, dissolvedAt FROM settlements ORDER BY dissolvedAt ASC, roomCode ASC"),
   listSettlementTotals: db.prepare("SELECT openId, total FROM settlement_totals WHERE roomCode = ?"),
   listSettlementMembers: db.prepare(
@@ -689,7 +767,9 @@ function createRoom(openId) {
       for (let i = 0; i < 20; i += 1) {
         const c = genRoomCode();
         const existedRoom = stmt.getRoom.get(c);
-        if (!existedRoom) {
+        const existedSettlement = stmt.getSettlement.get(c);
+        // 历史结算使用 roomCode 作为 settlementId，创建房间时需避开历史 roomCode，防止覆盖历史记录。
+        if (!existedRoom && !existedSettlement) {
           roomCode = c;
           break;
         }
@@ -938,7 +1018,7 @@ function dissolveRoom(openId) {
       const txCount = Number(txCountRow && txCountRow.c) || 0;
       const dissolvedAt = Date.now();
 
-      // 允许 roomCode 复用：结算使用 OR REPLACE 覆盖旧记录
+      // 历史记录要求“每次解散保留一条”；当前通过“房间号全局不复用”保证不会覆盖旧结算。
       stmt.upsertSettlement.run(rc, oid, txCount, dissolvedAt);
       stmt.deleteSettlementTotals.run(rc);
       stmt.deleteSettlementMembers.run(rc);
@@ -980,18 +1060,13 @@ function dissolveRoom(openId) {
 }
 
 /**
- * 获取结算（仅房主可读）。
+ * 构造结算详情（供房主页和历史详情复用）。
  *
- * @param {string} openId
  * @param {string} roomCode
+ * @param {{ownerOpenId:any, txCount:any, dissolvedAt:any}} s
  */
-function getSettlement(openId, roomCode) {
-  const oid = String(openId || "");
+function buildSettlementPayload(roomCode, s) {
   const rc = normalizeRoomCode(roomCode);
-
-  const s = stmt.getSettlement.get(rc);
-  if (!s) return fail("NOT_FOUND", "结算不存在");
-  if (String(s.ownerOpenId || "") !== oid) return fail("FORBIDDEN", "仅房主可查看结算");
 
   const totalsRows = stmt.listSettlementTotals.all(rc);
   const totals = {};
@@ -1008,15 +1083,66 @@ function getSettlement(openId, roomCode) {
   }));
 
   return {
+    roomCode: rc,
+    ownerOpenId: String(s.ownerOpenId || ""),
+    totals,
+    membersSnapshot,
+    txCount: Number(s.txCount || 0),
+    dissolvedAt: Number(s.dissolvedAt || 0)
+  };
+}
+
+/**
+ * 获取结算（仅房主可读）。
+ *
+ * @param {string} openId
+ * @param {string} roomCode
+ */
+function getSettlement(openId, roomCode) {
+  const oid = String(openId || "");
+  const rc = normalizeRoomCode(roomCode);
+
+  const s = stmt.getSettlement.get(rc);
+  if (!s) return fail("NOT_FOUND", "结算不存在");
+  if (String(s.ownerOpenId || "") !== oid) return fail("FORBIDDEN", "仅房主可查看结算");
+
+  return {
     ok: true,
-    settlement: {
-      roomCode: rc,
-      ownerOpenId: String(s.ownerOpenId || ""),
-      totals,
-      membersSnapshot,
-      txCount: Number(s.txCount || 0),
-      dissolvedAt: Number(s.dissolvedAt || 0)
-    }
+    settlement: buildSettlementPayload(rc, s)
+  };
+}
+
+/**
+ * 获取“我参与过的历史记录”分页。
+ *
+ * @param {string} openId
+ * @param {number|null} beforeDissolvedAt
+ * @param {string|null} beforeRoomCode
+ * @param {number} limit
+ */
+function listMySettlementHistory(openId, beforeDissolvedAt, beforeRoomCode, limit) {
+  return queryMySettlementHistoryPage(openId, beforeDissolvedAt, beforeRoomCode, limit);
+}
+
+/**
+ * 获取“我参与过的某次结算详情”。
+ *
+ * @param {string} openId
+ * @param {string} settlementId
+ */
+function getMySettlement(openId, settlementId) {
+  const oid = String(openId || "");
+  const rc = normalizeRoomCode(settlementId);
+
+  const s = stmt.getSettlement.get(rc);
+  if (!s) return fail("NOT_FOUND", "结算不存在");
+
+  const member = stmt.getSettlementMemberByOpenId.get(rc, oid);
+  if (!member) return fail("FORBIDDEN", "你未参与该次结算");
+
+  return {
+    ok: true,
+    settlement: buildSettlementPayload(rc, s)
   };
 }
 
@@ -1111,6 +1237,8 @@ module.exports = {
   getRoomSnapshot,
   listRoomTxPage,
   getSettlement,
+  listMySettlementHistory,
+  getMySettlement,
   getLeaderboard,
   getMe,
 

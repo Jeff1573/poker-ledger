@@ -71,6 +71,8 @@ const TX_PAGE_DEFAULT_LIMIT = 100;
 const TX_PAGE_MAX_LIMIT = 100;
 const LEADERBOARD_DEFAULT_LIMIT = 100;
 const LEADERBOARD_MAX_LIMIT = 200;
+const HISTORY_DEFAULT_LIMIT = 20;
+const HISTORY_MAX_LIMIT = 50;
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -635,6 +637,86 @@ app.post("/api/rooms/dissolve", authMiddleware, async (req, res) => {
     settlementId: result.settlementId
   });
   return ok(res, { settlementId: result.settlementId });
+});
+
+/**
+ * 获取“我的历史记录”分页（仅返回当前用户参与过的结算）。
+ */
+app.get("/api/history/me", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+
+  const limitText = String((req.query && req.query.limit) || "").trim();
+  const beforeDissolvedAtText = String((req.query && req.query.beforeDissolvedAt) || "").trim();
+  const beforeRoomCodeText = String((req.query && req.query.beforeRoomCode) || "").trim().toUpperCase();
+
+  let limit = HISTORY_DEFAULT_LIMIT;
+  if (limitText) {
+    const parsedLimit = parsePositiveIntParam(limitText);
+    if (!parsedLimit || parsedLimit > HISTORY_MAX_LIMIT) {
+      routeLog(req, "warn", "history.list.fail", "获取历史记录失败：limit 非法", {
+        code: "INVALID_LIMIT",
+        limitText
+      });
+      return fail(res, "INVALID_LIMIT", `limit 必须是 1~${HISTORY_MAX_LIMIT} 的整数`);
+    }
+    limit = parsedLimit;
+  }
+
+  const hasBeforeDissolvedAt = !!beforeDissolvedAtText;
+  const hasBeforeRoomCode = !!beforeRoomCodeText;
+  let beforeDissolvedAt = null;
+  let beforeRoomCode = null;
+
+  // 游标必须“要么都传，要么都不传”，避免出现翻页边界不确定。
+  if (hasBeforeDissolvedAt || hasBeforeRoomCode) {
+    if (!hasBeforeDissolvedAt || !hasBeforeRoomCode) {
+      routeLog(req, "warn", "history.list.fail", "获取历史记录失败：游标参数不完整", {
+        code: "INVALID_CURSOR"
+      });
+      return fail(res, "INVALID_CURSOR", "beforeDissolvedAt 与 beforeRoomCode 必须同时提供");
+    }
+
+    const parsedBeforeDissolvedAt = parsePositiveIntParam(beforeDissolvedAtText);
+    if (!parsedBeforeDissolvedAt) {
+      routeLog(req, "warn", "history.list.fail", "获取历史记录失败：beforeDissolvedAt 非法", {
+        code: "INVALID_CURSOR",
+        beforeDissolvedAtText
+      });
+      return fail(res, "INVALID_CURSOR", "beforeDissolvedAt 必须是正整数");
+    }
+
+    beforeDissolvedAt = parsedBeforeDissolvedAt;
+    beforeRoomCode = beforeRoomCodeText;
+  }
+
+  const history = store.listMySettlementHistory(openId, beforeDissolvedAt, beforeRoomCode, limit);
+  routeLog(req, "debug", "history.list.ok", "获取历史记录成功", {
+    limit,
+    rowCount: Array.isArray(history.rows) ? history.rows.length : 0,
+    hasMore: !!history.hasMore
+  });
+  return ok(res, { history });
+});
+
+/**
+ * 获取“我的某次历史详情”（仅参与该次结算的成员可读）。
+ */
+app.get("/api/history/me/:settlementId", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+  const settlementId = String(req.params.settlementId || "").trim().toUpperCase();
+
+  const r = store.getMySettlement(openId, settlementId);
+  if (!r.ok) {
+    routeLog(req, "warn", "history.detail.fail", "获取历史详情失败", {
+      code: String(r.code || ""),
+      roomCode: settlementId
+    });
+    return fail(res, r.code, r.message);
+  }
+  routeLog(req, "info", "history.detail.ok", "获取历史详情成功", {
+    roomCode: settlementId
+  });
+  return ok(res, { settlement: r.settlement });
 });
 
 /**

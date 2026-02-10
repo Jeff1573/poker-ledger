@@ -1,37 +1,125 @@
-<view class="container">
-  <view class="card">
-    <view class="title">我的资料</view>
-    <view class="subtle" style="margin-top: 10rpx;">默认使用微信头像昵称，可修改展示昵称</view>
+<view class="profile-page">
+  <view class="container profile-container">
+    <view class="card">
+      <view class="title">我的资料</view>
+      <view class="subtle" style="margin-top: 10rpx;">默认使用微信头像昵称，可修改展示昵称</view>
 
-    <view wx:if="{{hasProfile}}" class="row profile-row" style="margin-top: 22rpx;">
-      <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
-      <view style="margin-left: 18rpx;">
-        <view class="name">{{user.displayName}}</view>
-        <view class="subtle">微信昵称：{{user.nickNameWx}}</view>
+      <view wx:if="{{hasProfile}}" class="row profile-row" style="margin-top: 22rpx;">
+        <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
+        <view style="margin-left: 18rpx;">
+          <view class="name">{{user.displayName}}</view>
+          <view class="subtle">微信昵称：{{user.nickNameWx}}</view>
+        </view>
+      </view>
+
+      <view wx:else class="row-between" style="margin-top: 22rpx;">
+        <view>
+          <view class="name">尚未授权</view>
+          <view class="subtle">请先授权获取头像昵称</view>
+        </view>
+        <button class="btn-primary" bindtap="handleAuth" disabled="{{loading}}">去授权</button>
       </view>
     </view>
 
-    <view wx:else class="row-between" style="margin-top: 22rpx;">
-      <view>
-        <view class="name">尚未授权</view>
-        <view class="subtle">请先授权获取头像昵称</view>
+    <view class="card" wx:if="{{hasProfile}}">
+      <view class="title">修改昵称</view>
+      <input
+        class="input"
+        placeholder="请输入新昵称"
+        value="{{displayNameInput}}"
+        bindinput="handleDisplayNameInput"
+        maxlength="20"
+        style="margin-top: 18rpx;"
+      />
+      <button class="btn-primary" style="margin-top: 18rpx;" bindtap="handleSave" disabled="{{loading}}">
+        保存
+      </button>
+    </view>
+
+    <view class="card history-card" wx:if="{{hasProfile}}">
+      <view class="title">历史记录</view>
+      <view class="subtle" style="margin-top: 10rpx;">点击记录可查看该局胜负关系</view>
+
+      <view wx:if="{{historyLoading}}" class="subtle" style="margin-top: 18rpx;">加载中...</view>
+
+      <view wx:elif="{{historyError}}" style="margin-top: 18rpx;">
+        <view class="subtle">{{historyError}}</view>
+        <button class="btn-plain" style="margin-top: 14rpx;" bindtap="loadHistoryFirstPage">重试</button>
       </view>
-      <button class="btn-primary" bindtap="handleAuth" disabled="{{loading}}">去授权</button>
+
+      <view wx:elif="{{historyRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无历史记录</view>
+
+      <scroll-view
+        wx:else
+        class="history-scroll"
+        scroll-y
+        enhanced="{{true}}"
+        show-scrollbar="{{false}}"
+        lower-threshold="120"
+        bindscrolltolower="handleHistoryReachBottom"
+      >
+        <view class="history-scroll-inner">
+          <view class="history-list">
+            <view
+              wx:for="{{historyRows}}"
+              wx:key="settlementId"
+              class="history-item"
+              bindtap="handleTapHistory"
+              data-settlementid="{{item.settlementId}}"
+            >
+              <view class="row-between">
+                <view class="history-room">房间 {{item.roomCode}}</view>
+                <view class="subtle">{{item.dissolvedAtText}}</view>
+              </view>
+              <view class="row-between" style="margin-top: 10rpx;">
+                <view class="subtle">交易 {{item.txCount}} 笔</view>
+                <view class="history-amount {{item.myAmount > 0 ? 'plus' : (item.myAmount < 0 ? 'minus' : 'zero')}}">
+                  {{item.myAmountText}}
+                </view>
+              </view>
+            </view>
+          </view>
+
+          <view wx:if="{{historyLoadingMore}}" class="history-footer subtle">加载中...</view>
+          <view wx:elif="{{!historyHasMore}}" class="history-footer subtle">没有更多记录了</view>
+          <view class="history-bottom-spacer"></view>
+        </view>
+      </scroll-view>
     </view>
   </view>
+</view>
 
-  <view class="card" wx:if="{{hasProfile}}">
-    <view class="title">修改昵称</view>
-    <input
-      class="input"
-      placeholder="请输入新昵称"
-      value="{{displayNameInput}}"
-      bindinput="handleDisplayNameInput"
-      maxlength="20"
-      style="margin-top: 18rpx;"
-    />
-    <button class="btn-primary" style="margin-top: 18rpx;" bindtap="handleSave" disabled="{{loading}}">
-      保存
-    </button>
+<!-- 历史详情弹层 -->
+<view wx:if="{{showHistoryDetail}}" class="overlay" bindtap="handleCloseHistoryDetail">
+  <view class="overlay-card" catchtap="noop">
+    <view class="title">历史详情</view>
+    <view class="subtle" style="margin-top: 10rpx;">
+      {{historyDetailTitle}} · 交易 {{historyDetailTxCount}} 笔 · 解散于 {{historyDetailDissolvedAtText}}
+    </view>
+
+    <view wx:if="{{historyDetailLoading}}" class="subtle" style="margin-top: 18rpx;">加载中...</view>
+
+    <view wx:elif="{{historyDetailRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无数据</view>
+
+    <view wx:else style="margin-top: 18rpx;">
+      <view wx:for="{{historyDetailRows}}" wx:key="openId" class="item-row row-between">
+        <view class="row">
+          <image class="mini-avatar" src="{{item.avatarUrlResolved}}" mode="aspectFill" />
+          <view class="name-wrap">
+            <view class="name">
+              {{item.displayName}}
+              <text wx:if="{{item.role === 'owner'}}" class="badge">房主</text>
+            </view>
+            <view class="subtle" wx:if="{{item.active === false}}">已退出</view>
+          </view>
+        </view>
+
+        <view class="history-amount {{item.amount > 0 ? 'plus' : (item.amount < 0 ? 'minus' : 'zero')}}">
+          {{item.amountText}}
+        </view>
+      </view>
+    </view>
+
+    <button class="btn-primary" style="margin-top: 16rpx;" bindtap="handleCloseHistoryDetail">关闭</button>
   </view>
 </view>
