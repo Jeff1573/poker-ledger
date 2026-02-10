@@ -7,13 +7,9 @@
   border-bottom: none;
 }
 
-.leaderboard-btn {
-  margin-left: 20rpx;
-}
-
 .rank {
   width: 84rpx;
-  font-size: 24rpx;
+  font-size: 28rpx;
   font-weight: 700;
   color: #8E8E93;
 }
@@ -39,24 +35,15 @@
 }
 
 .rate {
-  font-size: 30rpx;
+  font-size: 32rpx;
   font-weight: 700;
   color: #007AFF;
 }
 
-.badge {
-  display: inline-block;
-  margin-left: 10rpx;
-  padding: 2rpx 10rpx;
-  border-radius: 999rpx;
-  font-size: 20rpx;
-  background: rgba(0, 122, 255, 0.12);
-  color: #007AFF;
-}
-
-.amount {
-  font-size: 34rpx;
-  font-weight: 700;
+.profit {
+  margin-top: 4rpx;
+  font-size: 28rpx;
+  font-weight: 600;
 }
 
 .plus {

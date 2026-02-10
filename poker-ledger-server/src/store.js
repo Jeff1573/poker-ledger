@@ -13,6 +13,9 @@ const ROOM_CODE_LEN = 6;
 const TX_SNAPSHOT_LIMIT = 100;
 const TX_PAGE_DEFAULT_LIMIT = 100;
 const TX_PAGE_MAX_LIMIT = 100;
+const LEADERBOARD_DEFAULT_LIMIT = 100;
+const LEADERBOARD_MAX_LIMIT = 200;
+const LEADERBOARD_BACKFILL_META_KEY = "leaderboard_backfilled_v1";
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 ensureDir(DATA_DIR);
@@ -193,6 +196,33 @@ function normalizeTxPageLimit(limit) {
 }
 
 /**
+ * 排行榜分页条数归一化。
+ *
+ * @param {any} limit
+ * @returns {number}
+ */
+function normalizeLeaderboardLimit(limit) {
+  const n = Number(limit || 0);
+  if (!Number.isInteger(n) || n <= 0) return LEADERBOARD_DEFAULT_LIMIT;
+  return Math.min(LEADERBOARD_MAX_LIMIT, n);
+}
+
+/**
+ * 胜率计算：平局不计分母。
+ *
+ * @param {number} winCount
+ * @param {number} lossCount
+ * @returns {number}
+ */
+function calcWinRate(winCount, lossCount) {
+  const win = Number(winCount || 0);
+  const loss = Number(lossCount || 0);
+  const denom = win + loss;
+  if (denom <= 0) return 0;
+  return win / denom;
+}
+
+/**
  * 查询房间交易分页（createdAt/id 双游标，避免同毫秒记录翻页错乱）。
  *
  * @param {string} roomCode
@@ -230,6 +260,9 @@ function queryRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit) {
 }
 
 const stmt = {
+  getMeta: db.prepare("SELECT value FROM meta WHERE key = ?"),
+  upsertMeta: db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)"),
+
   getUser: db.prepare("SELECT openId, nickNameWx, avatarUrlWx, displayName, createdAt, updatedAt FROM users WHERE openId = ?"),
   insertUserIgnore: db.prepare(
     "INSERT OR IGNORE INTO users(openId, nickNameWx, avatarUrlWx, displayName, createdAt, updatedAt) VALUES (?, '', '', '', ?, ?)"
@@ -302,9 +335,29 @@ const stmt = {
     "INSERT OR REPLACE INTO settlement_members(roomCode, seq, openId, displayName, avatarUrl, role, active) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ),
   getSettlement: db.prepare("SELECT roomCode, ownerOpenId, txCount, dissolvedAt FROM settlements WHERE roomCode = ?"),
+  listSettlements: db.prepare("SELECT roomCode, dissolvedAt FROM settlements ORDER BY dissolvedAt ASC, roomCode ASC"),
   listSettlementTotals: db.prepare("SELECT openId, total FROM settlement_totals WHERE roomCode = ?"),
   listSettlementMembers: db.prepare(
     "SELECT seq, openId, displayName, avatarUrl, role, active FROM settlement_members WHERE roomCode = ? ORDER BY seq ASC"
+  ),
+
+  clearLeaderboardStats: db.prepare("DELETE FROM leaderboard_stats"),
+  upsertLeaderboardStats: db.prepare(
+    "INSERT INTO leaderboard_stats(openId, displayName, avatarUrl, winCount, lossCount, drawCount, matchCount, netProfit, lastSettlementAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(openId) DO UPDATE SET " +
+      "displayName = CASE WHEN excluded.displayName <> '' THEN excluded.displayName ELSE leaderboard_stats.displayName END, " +
+      "avatarUrl = CASE WHEN excluded.avatarUrl <> '' THEN excluded.avatarUrl ELSE leaderboard_stats.avatarUrl END, " +
+      "winCount = leaderboard_stats.winCount + excluded.winCount, " +
+      "lossCount = leaderboard_stats.lossCount + excluded.lossCount, " +
+      "drawCount = leaderboard_stats.drawCount + excluded.drawCount, " +
+      "matchCount = leaderboard_stats.matchCount + excluded.matchCount, " +
+      "netProfit = leaderboard_stats.netProfit + excluded.netProfit, " +
+      "lastSettlementAt = CASE WHEN excluded.lastSettlementAt > leaderboard_stats.lastSettlementAt THEN excluded.lastSettlementAt ELSE leaderboard_stats.lastSettlementAt END, " +
+      "updatedAt = excluded.updatedAt"
+  ),
+  countLeaderboardStats: db.prepare("SELECT COUNT(*) AS c FROM leaderboard_stats"),
+  listLeaderboardStats: db.prepare(
+    "SELECT openId, displayName, avatarUrl, winCount, lossCount, drawCount, matchCount, netProfit, lastSettlementAt FROM leaderboard_stats"
   )
 };
 
@@ -424,6 +477,127 @@ function getRoomSnapshot(roomCode) {
  */
 function listRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit) {
   return queryRoomTxPage(roomCode, beforeCreatedAt, beforeId, limit);
+}
+
+/**
+ * 按单次结算结果累计排行榜数据。
+ *
+ * @param {{[openId: string]: number}} totals
+ * @param {{openId: string, displayName: string, avatarUrl: string}[]} membersSnapshot
+ * @param {number} dissolvedAt
+ */
+function upsertLeaderboardBySettlement(totals, membersSnapshot, dissolvedAt) {
+  const profileMap = {};
+  const members = Array.isArray(membersSnapshot) ? membersSnapshot : [];
+  for (const m of members) {
+    if (!m) continue;
+    const openId = String(m.openId || "").trim();
+    if (!openId) continue;
+    profileMap[openId] = {
+      displayName: String(m.displayName || ""),
+      avatarUrl: String(m.avatarUrl || "")
+    };
+  }
+
+  const totalMap = totals && typeof totals === "object" ? totals : {};
+  const openIdSet = new Set(Object.keys(totalMap));
+  for (const oid of Object.keys(profileMap)) openIdSet.add(oid);
+
+  const settledAt = Number(dissolvedAt || 0);
+  const updatedAt = Date.now();
+  for (const openId of openIdSet) {
+    const oid = String(openId || "").trim();
+    if (!oid) continue;
+
+    const amount = Number(totalMap[oid] || 0);
+    let winCount = 0;
+    let lossCount = 0;
+    let drawCount = 0;
+    if (amount > 0) {
+      winCount = 1;
+    } else if (amount < 0) {
+      lossCount = 1;
+    } else {
+      drawCount = 1;
+    }
+
+    const profile = profileMap[oid] || {};
+    stmt.upsertLeaderboardStats.run(
+      oid,
+      String(profile.displayName || ""),
+      String(profile.avatarUrl || ""),
+      winCount,
+      lossCount,
+      drawCount,
+      1,
+      amount,
+      settledAt,
+      updatedAt
+    );
+  }
+}
+
+/**
+ * 启动时回填排行榜（仅一次）。
+ * - 仅从已存储的结算记录回放，避免因 roomCode 复用导致重复累计。
+ * - 通过 meta 标记保证幂等。
+ */
+function backfillLeaderboardIfNeeded() {
+  const tx = db.transaction(() => {
+    const marked = stmt.getMeta.get(LEADERBOARD_BACKFILL_META_KEY);
+    if (marked && String(marked.value || "") === "true") {
+      return { skipped: true, settlementCount: 0 };
+    }
+
+    stmt.clearLeaderboardStats.run();
+
+    const settlements = stmt.listSettlements.all();
+    for (const s of settlements) {
+      if (!s) continue;
+      const roomCode = normalizeRoomCode(s.roomCode);
+      if (!roomCode) continue;
+
+      const totalsRows = stmt.listSettlementTotals.all(roomCode);
+      const totals = {};
+      for (const t of totalsRows) {
+        totals[String(t.openId || "")] = Number(t.total || 0);
+      }
+
+      const membersSnapshot = stmt.listSettlementMembers.all(roomCode).map((m) => ({
+        openId: String(m.openId || ""),
+        displayName: String(m.displayName || ""),
+        avatarUrl: String(m.avatarUrl || "")
+      }));
+
+      upsertLeaderboardBySettlement(totals, membersSnapshot, Number(s.dissolvedAt || 0));
+    }
+
+    stmt.upsertMeta.run(LEADERBOARD_BACKFILL_META_KEY, "true");
+    return { skipped: false, settlementCount: settlements.length };
+  });
+
+  try {
+    const r = tx();
+    logger.info({
+      scope: "store",
+      event: "store.leaderboard.backfill",
+      msg: r.skipped ? "排行榜历史回填已跳过" : "排行榜历史回填完成",
+      extra: {
+        skipped: !!r.skipped,
+        settlementCount: Number(r.settlementCount || 0)
+      }
+    });
+  } catch (err) {
+    logger.error({
+      scope: "store",
+      event: "store.leaderboard.backfill_fail",
+      msg: "排行榜历史回填失败",
+      extra: {
+        errMsg: String((err && err.message) || err || "")
+      }
+    });
+    throw err;
+  }
 }
 
 /**
@@ -786,6 +960,9 @@ function dissolveRoom(openId) {
         );
       }
 
+      // 累计全局排行榜（与解散放在同一事务，保证原子一致）。
+      upsertLeaderboardBySettlement(totals, membersSnapshot, dissolvedAt);
+
       // 清理房间数据
       stmt.deleteRoom.run(rc);
       stmt.deleteRoomMembers.run(rc);
@@ -844,6 +1021,62 @@ function getSettlement(openId, roomCode) {
 }
 
 /**
+ * 获取全局排行榜。
+ *
+ * 排序规则：
+ * 1) 胜率降序（平局不计分母）
+ * 2) 净输赢降序
+ * 3) 总场次降序
+ * 4) openId 升序（稳定排序）
+ *
+ * @param {number} limit
+ * @returns {{totalPlayers:number, rows:any[]}}
+ */
+function getLeaderboard(limit) {
+  const pageLimit = normalizeLeaderboardLimit(limit);
+  const allRows = stmt.listLeaderboardStats.all().map((r) => {
+    const winCount = Number(r.winCount || 0);
+    const lossCount = Number(r.lossCount || 0);
+    const drawCount = Number(r.drawCount || 0);
+    const matchCount = Number(r.matchCount || 0);
+    const netProfit = Number(r.netProfit || 0);
+    const winRate = calcWinRate(winCount, lossCount);
+
+    return {
+      openId: String(r.openId || ""),
+      displayName: String(r.displayName || ""),
+      avatarUrl: String(r.avatarUrl || ""),
+      winCount,
+      lossCount,
+      drawCount,
+      matchCount,
+      netProfit,
+      winRate,
+      lastSettlementAt: Number(r.lastSettlementAt || 0)
+    };
+  });
+
+  allRows.sort((a, b) => {
+    const rateDiff = b.winRate - a.winRate;
+    if (Math.abs(rateDiff) > 1e-12) return rateDiff > 0 ? 1 : -1;
+
+    if (b.netProfit !== a.netProfit) return b.netProfit - a.netProfit;
+    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
+    return String(a.openId || "").localeCompare(String(b.openId || ""));
+  });
+
+  const rows = allRows.slice(0, pageLimit).map((row, idx) => ({
+    rank: idx + 1,
+    ...row
+  }));
+
+  return {
+    totalPlayers: allRows.length,
+    rows
+  };
+}
+
+/**
  * 获取我的信息（用于首页展示/恢复房间）。
  *
  * @param {string} openId
@@ -862,6 +1095,9 @@ function getMe(openId) {
   };
 }
 
+// 启动即执行一次历史回填，确保旧结算可进入全局排行榜。
+backfillLeaderboardIfNeeded();
+
 module.exports = {
   DB_FILE,
   SQLITE_FILE,
@@ -875,6 +1111,7 @@ module.exports = {
   getRoomSnapshot,
   listRoomTxPage,
   getSettlement,
+  getLeaderboard,
   getMe,
 
   // 写方法（带锁 + 事务）

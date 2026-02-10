@@ -9,6 +9,7 @@
 
       <view style="display: flex; flex-direction: column; gap: 10rpx;">
         <button class="btn-plain" size="mini" bindtap="goProfile">资料</button>
+        <button class="btn-plain" size="mini" bindtap="goLeaderboard">总榜</button>
       </view>
     </view>
 

@@ -25,7 +25,8 @@ function isSqliteEmpty(db) {
       "room_txs",
       "settlements",
       "settlement_totals",
-      "settlement_members"
+      "settlement_members",
+      "leaderboard_stats"
     ];
     for (const t of tables) {
       // 表名来自固定白名单，不存在注入风险。
@@ -118,7 +119,8 @@ function importFromJsonIfNeeded(db, jsonPath) {
         "DELETE FROM room_members;" +
         "DELETE FROM rooms;" +
         "DELETE FROM user_room;" +
-        "DELETE FROM users;"
+        "DELETE FROM users;" +
+        "DELETE FROM leaderboard_stats;"
     );
 
     for (const u of Object.values(legacy.users)) {

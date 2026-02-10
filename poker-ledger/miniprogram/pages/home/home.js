@@ -196,6 +196,10 @@ Page({
     wx.navigateTo({ url: "/pages/profile/profile" });
   },
 
+  goLeaderboard() {
+    wx.navigateTo({ url: "/pages/leaderboard/leaderboard" });
+  },
+
   /**
    * 退出登录
    * - 调用后端退出接口

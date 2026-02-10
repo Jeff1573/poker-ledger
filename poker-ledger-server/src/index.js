@@ -69,6 +69,8 @@ const upload = multer({
 const ALLOWED_IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const TX_PAGE_DEFAULT_LIMIT = 100;
 const TX_PAGE_MAX_LIMIT = 100;
+const LEADERBOARD_DEFAULT_LIMIT = 100;
+const LEADERBOARD_MAX_LIMIT = 200;
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -282,6 +284,34 @@ app.get("/api/me", authMiddleware, async (req, res) => {
     roomCode: me.roomCode || ""
   });
   return ok(res, me);
+});
+
+/**
+ * 获取全局排行榜（已登录用户可读）。
+ */
+app.get("/api/leaderboard", authMiddleware, async (req, res) => {
+  const limitText = String((req.query && req.query.limit) || "").trim();
+  let limit = LEADERBOARD_DEFAULT_LIMIT;
+
+  if (limitText) {
+    const parsedLimit = parsePositiveIntParam(limitText);
+    if (!parsedLimit || parsedLimit > LEADERBOARD_MAX_LIMIT) {
+      routeLog(req, "warn", "leaderboard.fetch.fail", "获取排行榜失败：limit 非法", {
+        code: "INVALID_LIMIT",
+        limitText
+      });
+      return fail(res, "INVALID_LIMIT", `limit 必须是 1~${LEADERBOARD_MAX_LIMIT} 的整数`);
+    }
+    limit = parsedLimit;
+  }
+
+  const leaderboard = store.getLeaderboard(limit);
+  routeLog(req, "debug", "leaderboard.fetch.ok", "获取排行榜成功", {
+    limit,
+    rowCount: Array.isArray(leaderboard.rows) ? leaderboard.rows.length : 0,
+    totalPlayers: Number(leaderboard.totalPlayers || 0)
+  });
+  return ok(res, { leaderboard });
 });
 
 /**

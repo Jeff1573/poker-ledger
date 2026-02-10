@@ -32,6 +32,41 @@
   </view>
 
   <view class="card">
+    <view class="row-between">
+      <view class="title">总排行榜 Top 10</view>
+      <button class="btn-plain leaderboard-btn" bindtap="goLeaderboard">查看全部</button>
+    </view>
+
+    <view wx:if="{{leaderboardLoading}}" class="subtle" style="margin-top: 18rpx;">加载中...</view>
+
+    <view wx:elif="{{leaderboardError}}" style="margin-top: 18rpx;">
+      <view class="subtle">{{leaderboardError}}</view>
+    </view>
+
+    <view wx:elif="{{leaderboardRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无数据</view>
+
+    <view wx:else style="margin-top: 18rpx;">
+      <view wx:for="{{leaderboardRows}}" wx:key="openId" class="row-between item-row">
+        <view class="row">
+          <view class="rank">#{{item.rank}}</view>
+          <image class="avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+          <view class="name-wrap">
+            <view class="name">{{item.displayName}}</view>
+            <view class="subtle">{{item.winCount}}胜 {{item.lossCount}}负 {{item.drawCount}}平</view>
+          </view>
+        </view>
+
+        <view class="right-wrap">
+          <view class="rate">{{item.winRateText}}</view>
+          <view class="amount {{item.netProfit > 0 ? 'plus' : (item.netProfit < 0 ? 'minus' : 'zero')}}">
+            {{item.netProfitText}}
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
     <button class="btn-primary" bindtap="goHome">返回首页</button>
   </view>
 </view>

@@ -4,10 +4,10 @@
  * 目标：用最轻依赖把现有 JSON 数据结构落到关系型表结构，并保持对外 API 行为不变。
  */
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
- * 初始化/升级 schema（当前仅 v1）。
+ * 初始化/升级 schema（当前包含 v1/v2 结构）。
  *
  * @param {import("better-sqlite3").Database} db
  */
@@ -103,12 +103,26 @@ function initSchema(db) {
       "  PRIMARY KEY (roomCode, seq)\n" +
       ");\n" +
       "\n" +
+      "CREATE TABLE IF NOT EXISTS leaderboard_stats (\n" +
+      "  openId TEXT PRIMARY KEY,\n" +
+      "  displayName TEXT NOT NULL DEFAULT '',\n" +
+      "  avatarUrl TEXT NOT NULL DEFAULT '',\n" +
+      "  winCount INTEGER NOT NULL DEFAULT 0,\n" +
+      "  lossCount INTEGER NOT NULL DEFAULT 0,\n" +
+      "  drawCount INTEGER NOT NULL DEFAULT 0,\n" +
+      "  matchCount INTEGER NOT NULL DEFAULT 0,\n" +
+      "  netProfit INTEGER NOT NULL DEFAULT 0,\n" +
+      "  lastSettlementAt INTEGER NOT NULL DEFAULT 0,\n" +
+      "  updatedAt INTEGER NOT NULL DEFAULT 0\n" +
+      ");\n" +
+      "\n" +
       "CREATE INDEX IF NOT EXISTS idx_user_room_roomCode ON user_room(roomCode);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_members_roomCode_active ON room_members(roomCode, active);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_members_roomCode_joinedAt ON room_members(roomCode, joinedAt);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_txs_roomCode_createdAt ON room_txs(roomCode, createdAt);\n" +
       "CREATE INDEX IF NOT EXISTS idx_room_txs_roomCode_createdAt_id ON room_txs(roomCode, createdAt, id);\n" +
-      "CREATE INDEX IF NOT EXISTS idx_room_totals_roomCode ON room_totals(roomCode);\n"
+      "CREATE INDEX IF NOT EXISTS idx_room_totals_roomCode ON room_totals(roomCode);\n" +
+      "CREATE INDEX IF NOT EXISTS idx_leaderboard_lastSettlementAt ON leaderboard_stats(lastSettlementAt);\n"
   );
 
   // 标记 schema 版本（便于后续升级）。

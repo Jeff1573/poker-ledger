@@ -1,0 +1,43 @@
+<view class="container">
+  <view class="card">
+    <view class="title">总排行榜</view>
+    <view class="subtle" style="margin-top: 10rpx;">累计成员 {{totalPlayers}} 人</view>
+  </view>
+
+  <view class="card">
+    <view class="title">胜率榜</view>
+
+    <view wx:if="{{loading}}" class="subtle" style="margin-top: 18rpx;">加载中...</view>
+
+    <view wx:elif="{{errorText}}" style="margin-top: 18rpx;">
+      <view class="subtle">{{errorText}}</view>
+      <button class="btn-plain" style="margin-top: 14rpx;" bindtap="retryLoad">重试</button>
+    </view>
+
+    <view wx:elif="{{rows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无排行数据</view>
+
+    <view wx:else style="margin-top: 18rpx;">
+      <view wx:for="{{rows}}" wx:key="openId" class="item-row">
+        <view class="row-between">
+          <view class="row">
+            <view class="rank">#{{item.rank}}</view>
+            <image class="avatar" src="{{item.avatarUrlResolved}}" mode="aspectFill" />
+            <view class="name-wrap">
+              <view class="name">{{item.displayName}}</view>
+              <view class="subtle">
+                {{item.winCount}}胜 {{item.lossCount}}负 {{item.drawCount}}平 · {{item.matchCount}}场
+              </view>
+            </view>
+          </view>
+
+          <view class="right-wrap">
+            <view class="rate">{{item.winRateText}}</view>
+            <view class="profit {{item.netProfit > 0 ? 'plus' : (item.netProfit < 0 ? 'minus' : 'zero')}}">
+              {{item.netProfitText}}
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

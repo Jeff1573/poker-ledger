@@ -2,9 +2,23 @@ const { formatTime } = require("../../utils/format");
 const { resolveApiAssetUrl } = require("../../utils/url");
 
 /**
+ * 将胜率格式化为百分比文本。
+ *
+ * @param {any} v
+ * @returns {string}
+ */
+function formatWinRateText(v) {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n) || n <= 0) return "0.0%";
+  const pct = Math.max(0, Math.min(1, n)) * 100;
+  return `${pct.toFixed(1)}%`;
+}
+
+/**
  * 结算页：
  * - 仅房主可查看（由后端鉴权）
  * - 展示解散时的成员快照与净输赢
+ * - 展示全局排行榜 Top 10 预览
  */
 Page({
   data: {
@@ -12,7 +26,11 @@ Page({
     roomCode: "",
     txCount: 0,
     dissolvedAtText: "",
-    rows: []
+    rows: [],
+
+    leaderboardLoading: false,
+    leaderboardError: "",
+    leaderboardRows: []
   },
 
   onLoad(options) {
@@ -23,7 +41,10 @@ Page({
       return;
     }
 
-    this.setData({ roomCode }, () => this.loadSettlement());
+    this.setData({ roomCode }, () => {
+      this.loadSettlement();
+      this.loadLeaderboardPreview();
+    });
   },
 
   async loadSettlement() {
@@ -78,6 +99,64 @@ Page({
     } finally {
       this.setData({ loading: false });
     }
+  },
+
+  async loadLeaderboardPreview() {
+    if (this.data.leaderboardLoading) return;
+    this.setData({
+      leaderboardLoading: true,
+      leaderboardError: ""
+    });
+
+    try {
+      const app = getApp();
+      const r = await app.apiCall({
+        path: "/api/leaderboard?limit=10",
+        method: "GET"
+      });
+
+      if (!r || !r.ok || !r.leaderboard) {
+        this.setData({
+          leaderboardRows: [],
+          leaderboardLoading: false,
+          leaderboardError: String((r && r.message) || "排行榜加载失败")
+        });
+        return;
+      }
+
+      const rows = (r.leaderboard.rows || []).map((item) => {
+        const netProfit = Number(item.netProfit || 0);
+        return {
+          rank: Number(item.rank || 0),
+          openId: String(item.openId || ""),
+          displayName: String(item.displayName || "成员"),
+          avatarUrl: resolveApiAssetUrl(item.avatarUrl),
+          winRateText: formatWinRateText(item.winRate),
+          netProfit,
+          netProfitText: netProfit > 0 ? `+${netProfit}` : String(netProfit),
+          winCount: Number(item.winCount || 0),
+          lossCount: Number(item.lossCount || 0),
+          drawCount: Number(item.drawCount || 0)
+        };
+      });
+
+      this.setData({
+        leaderboardRows: rows,
+        leaderboardLoading: false,
+        leaderboardError: ""
+      });
+    } catch (err) {
+      console.error("loadLeaderboardPreview 失败", err);
+      this.setData({
+        leaderboardRows: [],
+        leaderboardLoading: false,
+        leaderboardError: "排行榜加载失败，请稍后重试"
+      });
+    }
+  },
+
+  goLeaderboard() {
+    wx.navigateTo({ url: "/pages/leaderboard/leaderboard" });
   },
 
   goHome() {
