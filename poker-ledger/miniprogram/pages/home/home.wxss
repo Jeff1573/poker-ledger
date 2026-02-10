@@ -118,7 +118,7 @@
   background: rgba(246, 240, 228, 0.92);
   border: 2rpx solid rgba(255, 255, 255, 0.38);
   box-shadow: 0 8rpx 16rpx rgba(13, 49, 39, 0.2);
-  font-size: 36rpx;
+  font-size: 34rpx;
   font-weight: 700;
   line-height: 1;
   display: flex;
@@ -126,13 +126,22 @@
   justify-content: center;
 }
 
-.suit-spade,
-.suit-club {
-  color: #2A6453;
+.suit-mahjong {
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: 1rpx;
 }
 
-.suit-heart {
+.suit-mahjong-red {
   color: #C93B2E;
+}
+
+.suit-mahjong-green {
+  color: #2A8A52;
+}
+
+.suit-mahjong-blue {
+  color: #2D5FA7;
+  font-size: 32rpx;
 }
 
 .score-track {
@@ -146,7 +155,7 @@
 
 .score-label {
   color: rgba(249, 245, 236, 0.86);
-  font-size: 20rpx;
+  font-size: 22rpx;
   white-space: nowrap;
 }
 

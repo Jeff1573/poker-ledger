@@ -16,7 +16,7 @@
       </view>
     </view>
 
-    <!-- 通用牌桌元素：筹码 + 花色 + 记分线 -->
+    <!-- 通用牌桌元素：筹码 + 麻将 + 记分线 -->
     <view class="table-mix">
       <view class="chip-group">
         <view class="chip chip-high">100</view>
@@ -25,19 +25,19 @@
       </view>
 
       <view class="suit-group">
-        <view class="suit suit-spade">♠</view>
-        <view class="suit suit-heart">♥</view>
-        <view class="suit suit-club">♣</view>
+        <view class="suit suit-mahjong suit-mahjong-blue">白</view>
+        <view class="suit suit-mahjong suit-mahjong-green">发</view>
+        <view class="suit suit-mahjong suit-mahjong-red">中</view>
       </view>
 
       <view class="score-track">
-        <view class="score-label">本局走势</view>
+        <view class="score-label">今日运势</view>
         <view class="track-line">
           <view class="track-seg seg-a"></view>
           <view class="track-seg seg-b"></view>
           <view class="track-seg seg-c"></view>
         </view>
-        <view class="score-end">+128</view>
+        <view class="score-end">吉</view>
       </view>
     </view>
   </view>
