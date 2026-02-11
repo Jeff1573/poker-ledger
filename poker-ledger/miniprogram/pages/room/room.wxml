@@ -1,15 +1,42 @@
-<view class="container room">
-  <!-- 房间信息 -->
-  <view class="card">
-    <view class="row-between">
-      <view>
-        <view class="title">房间 {{roomCode}}</view>
-        <view class="subtle" style="margin-top: 10rpx;">角色：{{roleText}}</view>
-      </view>
-      <button class="btn-plain" size="mini" bindtap="copyRoomCode">复制</button>
+<view class="container room room-tab-page">
+  <view wx:if="{{viewState !== 'in_room'}}" class="card room-state-card">
+    <view class="room-state-title" wx:if="{{viewState === 'no_profile'}}">请先在首页授权资料</view>
+    <view class="room-state-title" wx:elif="{{viewState === 'no_room'}}">你还未加入房间</view>
+    <view class="room-state-title" wx:else>房间加载中</view>
+
+    <view class="subtle room-state-subtle" wx:if="{{viewState === 'no_profile'}}">
+      授权完成后即可在房间页进行成员记账与交易操作。
+    </view>
+    <view class="subtle room-state-subtle" wx:elif="{{viewState === 'no_room'}}">
+      请先前往首页创建或加入房间，再返回这里查看实时账单。
+    </view>
+    <view class="subtle room-state-subtle" wx:else>
+      正在同步你的房间状态...
     </view>
 
-    <view wx:if="{{role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
+    <button wx:if="{{viewState === 'no_profile'}}" class="btn-primary room-state-btn" bindtap="handleGoHomeTab">
+      去首页授权
+    </button>
+    <button wx:elif="{{viewState === 'no_room'}}" class="btn-primary room-state-btn" bindtap="handleGoHomeTab">
+      去首页创建/加入
+    </button>
+  </view>
+
+  <!-- 房间信息 -->
+  <view class="card room-frame-card {{viewState !== 'in_room' ? 'room-frame-disabled' : ''}}">
+    <view class="row-between">
+      <view>
+        <view class="title" wx:if="{{viewState === 'in_room'}}">房间 {{roomCode}}</view>
+        <view class="title" wx:else>房间 --</view>
+        <view class="subtle" style="margin-top: 10rpx;" wx:if="{{viewState === 'in_room'}}">角色：{{roleText}}</view>
+        <view class="subtle" style="margin-top: 10rpx;" wx:else>角色：未加入</view>
+      </view>
+      <button class="btn-plain" size="mini" bindtap="copyRoomCode" disabled="{{viewState !== 'in_room' || loading}}">
+        复制
+      </button>
+    </view>
+
+    <view wx:if="{{viewState === 'in_room' && role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
       <button wx:if="{{false}}" class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
         入房码
       </button>
@@ -21,7 +48,7 @@
       </button>
     </view>
 
-    <view wx:else class="row action-row" style="margin-top: 18rpx;">
+    <view wx:elif="{{viewState === 'in_room'}}" class="row action-row" style="margin-top: 18rpx;">
       <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
         分享邀请
       </button>
@@ -29,17 +56,24 @@
         退出房间
       </button>
     </view>
+
+    <view wx:else class="row action-row" style="margin-top: 18rpx;">
+      <button class="btn-primary action-btn" disabled="{{true}}">分享邀请</button>
+      <button class="btn-danger action-btn action-btn-gap" disabled="{{true}}">房间操作</button>
+    </view>
   </view>
+
   <!-- 成员列表 -->
-  <view class="card">
+  <view class="card room-frame-card {{viewState !== 'in_room' ? 'room-frame-disabled' : ''}}">
     <view class="row-between">
       <view class="title">成员</view>
       <view class="subtle member-count">{{members.length}} 人</view>
     </view>
-    <view class="subtle" style="margin-top: 10rpx;">点击成员头像进行转账记账</view>
+    <view class="subtle" style="margin-top: 10rpx;" wx:if="{{viewState === 'in_room'}}">点击成员头像进行转账记账</view>
+    <view class="subtle" style="margin-top: 10rpx;" wx:else>授权并加入房间后，可查看成员并发起转账。</view>
 
     <scroll-view scroll-x show-scrollbar="{{false}}" class="member-scroll" style="margin-top: 18rpx;">
-      <view class="member-list">
+      <view class="member-list {{viewState !== 'in_room' ? 'member-list-disabled' : ''}}">
         <view
           wx:for="{{members}}"
           wx:key="openId"
@@ -55,17 +89,23 @@
           <view wx:if="{{item.role === 'owner'}}" class="badge">房主</view>
           <view wx:if="{{!item.active}}" class="badge badge-gray">已退出</view>
         </view>
+        <view wx:if="{{members.length === 0}}" class="subtle room-placeholder">授权并加入房间后显示成员列表</view>
       </view>
     </scroll-view>
   </view>
+
   <!-- 交易记录 -->
-  <view class="card tx-card">
+  <view class="card tx-card room-frame-card {{viewState !== 'in_room' ? 'room-frame-disabled' : ''}}">
     <view class="row-between">
       <view class="title">交易记录</view>
       <view class="subtle">{{txRows.length}} 笔</view>
     </view>
 
-    <view wx:if="{{txRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无记录</view>
+    <view wx:if="{{viewState !== 'in_room'}}" class="subtle room-placeholder" style="margin-top: 18rpx;">
+      授权并加入房间后显示交易记录
+    </view>
+
+    <view wx:elif="{{txRows.length === 0}}" class="subtle" style="margin-top: 18rpx;">暂无记录</view>
 
     <scroll-view
       scroll-y
@@ -99,7 +139,7 @@
 </view>
 
 <!-- 入房码弹层 -->
-<view wx:if="{{showJoinCode}}" class="overlay" bindtap="closeJoinCode">
+<view wx:if="{{viewState === 'in_room' && showJoinCode}}" class="overlay" bindtap="closeJoinCode">
   <view class="overlay-card" catchtap="noop">
     <view class="title">扫码加入</view>
     <image class="qrcode" src="{{joinCodeUrl}}" mode="aspectFit" />
@@ -108,7 +148,7 @@
 </view>
 
 <!-- 房主首次分享引导弹层 -->
-<view wx:if="{{showShareGuide}}" class="overlay" bindtap="closeShareGuide">
+<view wx:if="{{viewState === 'in_room' && showShareGuide}}" class="overlay" bindtap="closeShareGuide">
   <view class="overlay-card share-guide-card" catchtap="noop">
     <view class="title">邀请成员</view>
     <view class="subtle" style="margin-top: 12rpx;">
@@ -116,14 +156,13 @@
     </view>
 
     <view class="row share-guide-actions" style="margin-top: 22rpx;">
-      <!-- <button class="btn-primary" style="flex: 1;" bindtap="handleShareByMenuTip">如何分享</button> -->
       <button class="btn-plain" style="flex: 1; margin-left: 14rpx;" bindtap="closeShareGuide">知道了</button>
     </view>
   </view>
 </view>
 
 <!-- 转账弹层 -->
-<view wx:if="{{showTransferModal}}" class="overlay" bindtap="closeTransferModal">
+<view wx:if="{{viewState === 'in_room' && showTransferModal}}" class="overlay" bindtap="closeTransferModal">
   <view class="overlay-card" catchtap="noop">
     <view class="title">转账</view>
 

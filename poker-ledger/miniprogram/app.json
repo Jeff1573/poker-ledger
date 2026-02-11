@@ -12,6 +12,32 @@
     "navigationBarTitleText": "打牌记账",
     "navigationBarTextStyle": "black",
     "backgroundColor": "#F7F2E9"
+  },
+  "tabBar": {
+    "color": "#687974",
+    "selectedColor": "#2E8B73",
+    "backgroundColor": "#F7F2E9",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/home/home",
+        "text": "首页",
+        "iconPath": "assets/tabbar/home.png",
+        "selectedIconPath": "assets/tabbar/home-active.png"
+      },
+      {
+        "pagePath": "pages/room/room",
+        "text": "房间",
+        "iconPath": "assets/tabbar/room.png",
+        "selectedIconPath": "assets/tabbar/room-active.png"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的",
+        "iconPath": "assets/tabbar/profile.png",
+        "selectedIconPath": "assets/tabbar/profile-active.png"
+      }
+    ]
   }
 }
 

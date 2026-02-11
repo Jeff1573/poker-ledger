@@ -85,6 +85,7 @@ function mergeTxList(primary, secondary) {
 Page({
   data: {
     loading: false,
+    viewState: "loading",
 
     roomCode: "",
     showShareGuide: false,
@@ -117,14 +118,8 @@ Page({
     joinCodeUrl: ""
   },
 
-  onLoad(options) {
-    const roomCode = String((options && options.code) || "").trim().toUpperCase();
-    if (!roomCode) {
-      wx.showToast({ title: "缺少房间号", icon: "none" });
-      wx.redirectTo({ url: "/pages/home/home" });
-      return;
-    }
-    this.setData({ roomCode });
+  onLoad() {
+    this.setData({ viewState: "loading" });
   },
 
   onShow() {
@@ -138,7 +133,7 @@ Page({
     } catch (err) {
       // ignore
     }
-    this.enterRoom();
+    this.bootstrapRoomTab();
   },
 
   onHide() {
@@ -154,15 +149,147 @@ Page({
   noop() {},
 
   /**
+   * 空态按钮：统一回到首页 tab。
+   */
+  handleGoHomeTab() {
+    this.switchToHomeTab();
+  },
+
+  /**
+   * 切换到首页 tab，失败时兜底 reLaunch。
+   */
+  switchToHomeTab() {
+    wx.switchTab({
+      url: "/pages/home/home",
+      fail: () => {
+        wx.reLaunch({ url: "/pages/home/home" });
+      }
+    });
+  },
+
+  /**
+   * 应用房间 tab 空态，并清理房间态相关数据与连接。
+   *
+   * @param {"loading"|"no_profile"|"no_room"} viewState
+   */
+  applyIdleState(viewState) {
+    this.closeSocket();
+    this._roomGoneHandled = false;
+    this.setData({
+      viewState,
+      roomCode: "",
+      showShareGuide: false,
+      ownerGuideShown: false,
+      role: "",
+      roleText: "",
+      room: null,
+      members: [],
+      totalsRows: [],
+      txs: [],
+      txRows: [],
+      txHasMore: false,
+      txLoadingMore: false,
+      txLoadError: "",
+      txCursorCreatedAt: 0,
+      txCursorId: "",
+      showTransferModal: false,
+      transferToOpenId: "",
+      transferToName: "",
+      transferToAvatarUrl: "",
+      transferAmountText: "",
+      transferCanSubmit: false,
+      showJoinCode: false,
+      joinCodeUrl: ""
+    });
+  },
+
+  /**
+   * 进入“未授权资料”视图。
+   */
+  applyNoProfileState() {
+    this.applyIdleState("no_profile");
+  },
+
+  /**
+   * 进入“未在房间”视图。
+   */
+  applyNoRoomState() {
+    this.applyIdleState("no_room");
+  },
+
+  /**
+   * room tab 启动入口：
+   * 1) 先根据 /api/me 判定资料状态与在房状态
+   * 2) 仅在 inRoom 时进入实时同步链路（WS + snapshot）
+   */
+  async bootstrapRoomTab() {
+    if (this._bootstrapping) return;
+    this._bootstrapping = true;
+    this.setData({
+      loading: true,
+      viewState: "loading"
+    });
+
+    try {
+      const app = getApp();
+      const session = await app.ensureSession();
+      this.setData({ meOpenId: session.openId });
+
+      const me = await app.loadMe();
+      if (!me || !me.ok) {
+        this.toast((me && me.message) || "房间状态初始化失败");
+        this.applyNoRoomState();
+        return;
+      }
+
+      const user = me.user || null;
+      const hasProfile = !!(user && user.displayName && user.avatarUrlWx);
+      if (!hasProfile) {
+        this.applyNoProfileState();
+        return;
+      }
+
+      const roomCode = String(me.roomCode || "").trim().toUpperCase();
+      if (!me.inRoom || !roomCode) {
+        this.applyNoRoomState();
+        return;
+      }
+
+      this.setData({
+        viewState: "in_room",
+        roomCode
+      });
+      await this.enterRoom(roomCode);
+    } catch (err) {
+      log.error("room.bootstrap.fail", "房间 tab 初始化失败", {
+        errMsg: String((err && err.message) || err || "")
+      });
+      this.toast("房间初始化失败，请稍后重试");
+      this.applyNoRoomState();
+    } finally {
+      this.setData({ loading: false });
+      this._bootstrapping = false;
+    }
+  },
+
+  /**
    * 进入房间前做一次访问控制：
    * - 必须存在 /api/rooms/my 映射且 roomCode 匹配
    * - 再建立 WebSocket 订阅，保证“回到房间自动同步”
+   *
+   * @param {string} expectedRoomCode
    */
-  async enterRoom() {
+  async enterRoom(expectedRoomCode) {
     if (this._entering) return;
+    const roomCode = String(expectedRoomCode || this.data.roomCode || "").trim().toUpperCase();
+    if (!roomCode) {
+      this.applyNoRoomState();
+      return;
+    }
+
     this._entering = true;
     log.info("room.enter.start", "开始进入房间", {
-      roomCodeMasked: log.maskRoomCode(this.data.roomCode)
+      roomCodeMasked: log.maskRoomCode(roomCode)
     });
 
     try {
@@ -176,17 +303,16 @@ Page({
       const myRoom = await app.apiCall({ path: "/api/rooms/my", method: "GET" });
       if (!myRoom || !myRoom.ok) {
         this.toast((myRoom && myRoom.message) || "进入房间失败");
-        wx.redirectTo({ url: "/pages/home/home" });
+        this.applyNoRoomState();
         return;
       }
       if (!myRoom.inRoom) {
-        this.toast("你不在房间中");
-        wx.redirectTo({ url: "/pages/home/home" });
+        this.applyNoRoomState();
         return;
       }
-      if (String(myRoom.roomCode || "").toUpperCase() !== this.data.roomCode) {
-        this.toast("你不在该房间中");
-        wx.redirectTo({ url: "/pages/home/home" });
+      const myRoomCode = String(myRoom.roomCode || "").trim().toUpperCase();
+      if (!myRoomCode || myRoomCode !== roomCode) {
+        this.applyNoRoomState();
         return;
       }
 
@@ -195,9 +321,12 @@ Page({
       const shouldShowShareGuide =
         myRoom.role === "owner" &&
         !this.data.ownerGuideShown &&
-        storage.consumePendingOwnerShareGuideRoom(this.data.roomCode);
+        storage.consumePendingOwnerShareGuideRoom(myRoomCode);
 
+      this._roomGoneHandled = false;
       this.setData({
+        viewState: "in_room",
+        roomCode: myRoomCode,
         role: myRoom.role,
         roleText,
         showShareGuide: shouldShowShareGuide,
@@ -215,11 +344,11 @@ Page({
     } catch (err) {
       console.error("enterRoom 失败", err);
       log.error("room.enter.fail", "进入房间失败", {
-        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        roomCodeMasked: log.maskRoomCode(roomCode),
         errMsg: String((err && err.message) || err || "")
       });
       this.toast("进入房间失败，请检查后端/网络");
-      wx.redirectTo({ url: "/pages/home/home" });
+      this.applyNoRoomState();
     } finally {
       this._entering = false;
     }
@@ -456,7 +585,7 @@ Page({
       // 如：订阅失败（你不在该房间中）
       this.toast(data.message || "同步失败");
       if (data.code === "FORBIDDEN" || data.code === "UNAUTHORIZED") {
-        wx.redirectTo({ url: "/pages/home/home" });
+        this.applyNoRoomState();
       }
     }
   },
@@ -525,8 +654,10 @@ Page({
       try {
         const app = getApp();
         const myRoom = await app.apiCall({ path: "/api/rooms/my", method: "GET" });
-        if (!myRoom || !myRoom.ok || !myRoom.inRoom || myRoom.roomCode !== this.data.roomCode) {
-          wx.redirectTo({ url: "/pages/home/home" });
+        const roomCode = String(this.data.roomCode || "").trim().toUpperCase();
+        const myRoomCode = String((myRoom && myRoom.roomCode) || "").trim().toUpperCase();
+        if (!myRoom || !myRoom.ok || !myRoom.inRoom || myRoomCode !== roomCode) {
+          this.applyNoRoomState();
           return;
         }
       } catch (err) {
@@ -641,6 +772,7 @@ Page({
    * 拉取交易历史分页（createdAt + id 双游标）。
    */
   async loadMoreTxs() {
+    if (this.data.viewState !== "in_room") return;
     if (this.data.txLoadingMore) return;
     if (!this.data.txHasMore) return;
 
@@ -731,6 +863,7 @@ Page({
    * 点击成员头像：打开转账弹窗（我转给 TA）。
    */
   handleTapMember(e) {
+    if (this.data.viewState !== "in_room") return;
     if (this.data.loading) return;
 
     const openId = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.openid) || "").trim();
@@ -794,6 +927,7 @@ Page({
    * 确认转账：调用后端写入交易；成功后由 WS 推送刷新列表。
    */
   async confirmTransfer() {
+    if (this.data.viewState !== "in_room") return;
     if (!this.data.transferCanSubmit) return;
     if (this._transferSubmitting) return;
 
@@ -867,6 +1001,7 @@ Page({
   },
 
   async handleShowJoinCode() {
+    if (this.data.viewState !== "in_room") return;
     if (this.data.role !== "owner") return;
     if (this.data.loading) return;
 
@@ -895,6 +1030,7 @@ Page({
    * - 右上角菜单仍可触发 onShareAppMessage，因此统一引导到该入口。
    */
   handleShareByMenuTip() {
+    if (this.data.viewState !== "in_room") return;
     if (this.data.showShareGuide) this.closeShareGuide();
     wx.showModal({
       title: "分享邀请",
@@ -905,6 +1041,7 @@ Page({
   },
 
   async handleLeave() {
+    if (this.data.viewState !== "in_room") return;
     if (this.data.role === "owner") return;
     if (this.data.loading) return;
 
@@ -930,7 +1067,7 @@ Page({
       }
 
       this.closeSocket();
-      wx.redirectTo({ url: "/pages/home/home" });
+      this.switchToHomeTab();
     } catch (err) {
       console.error("room_leave 失败", err);
       this.toast("退出失败，请稍后重试");
@@ -940,6 +1077,7 @@ Page({
   },
 
   async handleDissolve() {
+    if (this.data.viewState !== "in_room") return;
     if (this.data.role !== "owner") return;
     if (this.data.loading) return;
 
@@ -993,7 +1131,7 @@ Page({
       title: "房间已解散",
       content: "房主已解散房间",
       showCancel: false,
-      success: () => wx.redirectTo({ url: "/pages/home/home" })
+      success: () => this.switchToHomeTab()
     });
   },
 
@@ -1013,6 +1151,13 @@ Page({
    * @returns {{title: string, path: string}}
    */
   onShareAppMessage(res) {
+    if (this.data.viewState !== "in_room") {
+      return {
+        title: "来打牌记账",
+        path: "/pages/home/home"
+      };
+    }
+
     // 仅保留右上角菜单分享通路：若引导层还在，分享时顺便关闭，避免重复打扰。
     if (this.data.showShareGuide) {
       this.closeShareGuide();

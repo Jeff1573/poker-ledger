@@ -79,6 +79,8 @@ Page({
   data: {
     loading: false,
     hasProfile: false,
+    // 资料弹窗：未授权用户点击“开始记账”后才展开。
+    showProfileModal: false,
     user: null,
     userAvatarUrl: "",
     roomCodeInput: "",
@@ -163,7 +165,7 @@ Page({
 
       // 1) 若仍在房间内，直接恢复
       if (me.inRoom && me.roomCode) {
-        wx.redirectTo({ url: `/pages/room/room?code=${me.roomCode}` });
+        wx.switchTab({ url: "/pages/room/room" });
         return;
       }
 
@@ -193,12 +195,32 @@ Page({
   },
 
   goProfile() {
-    wx.navigateTo({ url: "/pages/profile/profile" });
+    wx.switchTab({ url: "/pages/profile/profile" });
   },
 
   goLeaderboard() {
     wx.navigateTo({ url: "/pages/leaderboard/leaderboard" });
   },
+
+  /**
+   * 主动触发资料弹窗，避免进入首页即要求授权。
+   */
+  handleOpenProfileModal() {
+    this.setData({ showProfileModal: true });
+  },
+
+  /**
+   * 关闭资料弹窗。保存/上传进行中不允许关闭，避免流程中断。
+   */
+  handleCloseProfileModal() {
+    if (this.data.loading) return;
+    this.setData({ showProfileModal: false });
+  },
+
+  /**
+   * 占位函数：用于弹窗内容区 catchtap，阻止冒泡到遮罩层。
+   */
+  noop() {},
 
   /**
    * 退出登录
@@ -375,6 +397,8 @@ Page({
         return;
       }
 
+      // 资料保存成功后先关闭弹窗，再走统一的首页刷新链路。
+      this.setData({ showProfileModal: false });
       // 刷新用户档案并继续流程（包含扫码自动加入）
       await this.bootstrap();
     } catch (err) {
@@ -414,7 +438,7 @@ Page({
       const roomCode = String(r.roomCode || "").trim().toUpperCase();
       // 写入一次性“房主分享引导”标记：仅在创建后首次进入房间时展示。
       storage.setPendingOwnerShareGuideRoom(roomCode);
-      wx.redirectTo({ url: `/pages/room/room?code=${roomCode}` });
+      wx.switchTab({ url: "/pages/room/room" });
     } catch (err) {
       console.error("创建房间失败", err);
       this.toast("创建失败，请稍后重试");
@@ -532,7 +556,7 @@ Page({
       }
 
       this.setData({ pendingRoomCode: "" });
-      wx.redirectTo({ url: `/pages/room/room?code=${r.roomCode}` });
+      wx.switchTab({ url: "/pages/room/room" });
     } catch (err) {
       console.error("加入房间失败", err);
       this.toast("加入失败，请稍后重试");
@@ -575,6 +599,8 @@ Page({
         return;
       }
 
+      // 兼容授权成功后与 chooseAvatar 流程保持一致：关闭弹窗再刷新首页状态。
+      this.setData({ showProfileModal: false });
       // 保存成功后按统一路由链路继续（含“已在房间优先 + 邀请自动加入”）。
       await this.bootstrap();
     } catch (err) {

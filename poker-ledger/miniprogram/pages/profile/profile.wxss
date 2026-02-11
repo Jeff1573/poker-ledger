@@ -145,3 +145,20 @@
   background: rgba(0, 122, 255, 0.12);
   color: #007AFF;
 }
+
+.auth-btn {
+  margin-left: 0;
+}
+
+.profile-modal-card {
+  box-shadow: 0 12rpx 30rpx rgba(0, 0, 0, 0.16);
+}
+
+.profile-modal-avatar-row {
+  margin-top: 18rpx;
+}
+
+.profile-modal-actions {
+  margin-top: 18rpx;
+  align-items: center;
+}

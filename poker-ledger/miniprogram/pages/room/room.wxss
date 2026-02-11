@@ -8,6 +8,46 @@ page {
   min-height: 0;
 }
 
+.room-tab-page {
+  justify-content: flex-start;
+}
+
+.room-state-card {
+  margin-top: 10rpx;
+  padding: 28rpx 24rpx;
+}
+
+.room-state-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #1E2F2A;
+}
+
+.room-state-subtle {
+  margin-top: 12rpx;
+}
+
+.room-state-btn {
+  margin-top: 24rpx;
+}
+
+.room-frame-card {
+  transition: opacity 120ms ease;
+}
+
+.room-frame-disabled {
+  opacity: 0.68;
+}
+
+.member-list-disabled {
+  pointer-events: none;
+}
+
+.room-placeholder {
+  text-align: center;
+  padding: 18rpx 0;
+}
+
 /* tx-card 占据剩余空间,使用 flex 布局 */
 .tx-card {
   flex: 1;

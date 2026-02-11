@@ -17,7 +17,7 @@
           <view class="name">尚未授权</view>
           <view class="subtle">请先授权获取头像昵称</view>
         </view>
-        <button class="btn-primary" bindtap="handleAuth" disabled="{{loading}}">去授权</button>
+        <button class="btn-primary" bindtap="handleOpenProfileModal" disabled="{{loading}}">去授权</button>
       </view>
     </view>
 
@@ -85,6 +85,59 @@
           <view class="history-bottom-spacer"></view>
         </view>
       </scroll-view>
+    </view>
+  </view>
+</view>
+
+<!-- 资料授权弹窗：与首页授权流程保持一致 -->
+<view wx:if="{{showProfileModal}}" class="overlay" bindtap="handleCloseProfileModal">
+  <view class="overlay-card profile-modal-card" catchtap="noop">
+    <view class="title">完善资料</view>
+    <view class="subtle" style="margin-top: 10rpx;">用于房间内展示头像和昵称，完成后即可创建或加入房间</view>
+
+    <view wx:if="{{supportChooseAvatar}}">
+      <view class="row profile-modal-avatar-row">
+        <image class="avatar" src="{{draftAvatarLocal}}" mode="aspectFill" />
+        <button class="btn-plain auth-btn" open-type="chooseAvatar" bindchooseavatar="handleChooseAvatar" disabled="{{loading}}">
+          选择头像
+        </button>
+      </view>
+
+      <input
+        class="input"
+        type="nickname"
+        placeholder="请输入昵称"
+        value="{{draftDisplayName}}"
+        bindinput="handleNicknameInput"
+        maxlength="20"
+        style="margin-top: 14rpx;"
+      />
+
+      <view class="row profile-modal-actions">
+        <button class="btn-plain" style="flex: 1;" bindtap="handleCloseProfileModal" disabled="{{loading}}">
+          取消
+        </button>
+        <button
+          class="btn-primary"
+          style="flex: 1; margin-left: 14rpx;"
+          bindtap="handleSaveAuthProfile"
+          disabled="{{!canSaveProfile || loading}}"
+        >
+          保存并授权
+        </button>
+      </view>
+    </view>
+
+    <view wx:else>
+      <view class="subtle" style="margin-top: 18rpx;">当前设备不支持直接选择头像，请使用授权方式获取资料。</view>
+      <view class="row profile-modal-actions">
+        <button class="btn-plain" style="flex: 1;" bindtap="handleCloseProfileModal" disabled="{{loading}}">
+          取消
+        </button>
+        <button class="btn-primary" style="flex: 1; margin-left: 14rpx;" bindtap="handleAuthLegacy" disabled="{{loading}}">
+          授权获取
+        </button>
+      </view>
     </view>
   </view>
 </view>

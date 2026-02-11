@@ -1,5 +1,9 @@
-.home-page {
-  min-height: calc(100vh - 48rpx);
+/* 首页使用“页面固定 + 容器滚动”模式：
+ * - 内容刚好一屏时不出现页面级滚动
+ * - 内容超出时由 home-page 自身滚动，避免被裁剪
+ */
+page {
+  /* overflow: hidden; */
 }
 
 .hero-shell {
@@ -228,6 +232,12 @@
   min-height: 0;
 }
 
+.home-page {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .auth-card {
   flex: 1;
   min-width: 0;
@@ -259,6 +269,10 @@
   margin-left: 0;
 }
 
+.auth-single-btn {
+  margin-top: 18rpx;
+}
+
 .legacy-auth {
   align-items: flex-start;
 }
@@ -270,6 +284,20 @@
 
 .room-card {
   margin-top: 4rpx;
+}
+
+.room-card-disabled {
+  opacity: 0.72;
+}
+
+.room-auth-tip {
+  margin-top: 12rpx;
+}
+
+.room-card-disabled .input {
+  background: #EFE8D8;
+  border-color: rgba(104, 121, 116, 0.2);
+  color: #8A9893;
 }
 
 .join-row {
@@ -287,6 +315,41 @@
 
 .logout-btn {
   margin-top: 2rpx;
+}
+
+.overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28rpx;
+}
+
+.overlay-card {
+  width: 100%;
+  max-width: 640rpx;
+  background: #FFFFFF;
+  border-radius: 24rpx;
+  padding: 24rpx;
+}
+
+.profile-modal-card {
+  box-shadow: 0 12rpx 30rpx rgba(0, 0, 0, 0.16);
+}
+
+.profile-modal-avatar-row {
+  margin-top: 18rpx;
+}
+
+.profile-modal-actions {
+  margin-top: 18rpx;
+  align-items: center;
 }
 
 @keyframes hero-fade-in {

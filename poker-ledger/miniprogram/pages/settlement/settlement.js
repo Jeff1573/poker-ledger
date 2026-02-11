@@ -38,7 +38,7 @@ Page({
     const roomCode = String((options && options.roomCode) || "").trim().toUpperCase();
     if (!roomCode) {
       wx.showToast({ title: "缺少结算ID", icon: "none" });
-      wx.redirectTo({ url: "/pages/home/home" });
+      wx.switchTab({ url: "/pages/home/home" });
       return;
     }
 
@@ -162,6 +162,6 @@ Page({
   },
 
   goHome() {
-    wx.redirectTo({ url: "/pages/home/home" });
+    wx.switchTab({ url: "/pages/home/home" });
   }
 });
