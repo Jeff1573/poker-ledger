@@ -193,6 +193,7 @@ Page({
    * @param {"loading"|"no_profile"|"no_room"} viewState
    */
   applyIdleState(viewState) {
+    this._joinCodeReqVersion = Number(this._joinCodeReqVersion || 0) + 1;
     this.closeSocket();
     this._roomGoneHandled = false;
     this.setData({
@@ -1034,18 +1035,59 @@ Page({
   async handleShowJoinCode() {
     if (this.data.viewState !== "in_room") return;
     if (this.data.loading) return;
+    if (this._joinCodeLoading) return;
 
-    // 说明：图片资源无法方便携带 Authorization header，因此后端以“公共图片”方式返回 png
-    const base = String(CONST.API_BASE_URL || "").replace(/\/$/, "");
+    this._joinCodeLoading = true;
+    const reqVersion = Number(this._joinCodeReqVersion || 0) + 1;
+    this._joinCodeReqVersion = reqVersion;
     const envVersion = getCurrentMiniEnvVersion();
-    const joinCodeUrl =
-      `${base}/api/rooms/${this.data.roomCode}/minicode.png` +
-      `?envVersion=${encodeURIComponent(envVersion)}`;
-    this.setData({
-      joinCodeUrl,
-      joinCodeLoadError: false,
-      showJoinCode: true
-    });
+    const app = getApp();
+    this.setData({ showJoinCode: true, joinCodeUrl: "", joinCodeLoadError: false });
+
+    try {
+      const path =
+        `/api/rooms/${this.data.roomCode}/share-codes` +
+        `?envVersion=${encodeURIComponent(envVersion)}`;
+      const r = await app.apiCall({
+        path,
+        method: "GET"
+      });
+      const minicodeUrl = String((r && r.joinCode && r.joinCode.minicodeUrl) || "");
+      if (reqVersion !== this._joinCodeReqVersion) return;
+      if (!r || !r.ok || !minicodeUrl) {
+        log.warn("join_code.fetch.biz_fail", "获取邀请码失败", {
+          roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+          code: String((r && r.code) || ""),
+          message: String((r && r.message) || "")
+        });
+        this.toast((r && r.message) || "邀请码生成失败，请稍后重试");
+        this.setData({
+          showJoinCode: false,
+          joinCodeUrl: "",
+          joinCodeLoadError: false
+        });
+        return;
+      }
+
+      this.setData({
+        joinCodeUrl: resolveApiAssetUrl(minicodeUrl),
+        joinCodeLoadError: false
+      });
+    } catch (err) {
+      if (reqVersion !== this._joinCodeReqVersion) return;
+      log.warn("join_code.fetch.fail", "获取邀请码失败", {
+        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+        errMsg: String((err && err.message) || err || "")
+      });
+      this.toast("邀请码生成失败，请稍后重试");
+      this.setData({
+        showJoinCode: false,
+        joinCodeUrl: "",
+        joinCodeLoadError: false
+      });
+    } finally {
+      this._joinCodeLoading = false;
+    }
   },
 
   handleJoinCodeImageLoad() {
@@ -1063,6 +1105,7 @@ Page({
   },
 
   closeJoinCode() {
+    this._joinCodeReqVersion = Number(this._joinCodeReqVersion || 0) + 1;
     this.setData({
       showJoinCode: false,
       joinCodeLoadError: false

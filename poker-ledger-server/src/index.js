@@ -9,7 +9,12 @@ const multer = require("multer");
 const config = require("./config");
 const store = require("./store");
 const { codeToOpenId, generateRoomMiniCode } = require("./wechat");
-const { signToken, authMiddleware } = require("./auth");
+const {
+  signToken,
+  authMiddleware,
+  signRoomImageAccessToken,
+  verifyRoomImageAccessToken
+} = require("./auth");
 const { createWsHub } = require("./wsHub");
 const logger = require("./logger");
 
@@ -75,7 +80,11 @@ const HISTORY_DEFAULT_LIMIT = 20;
 const HISTORY_MAX_LIMIT = 50;
 const MINICODE_HTTP_CACHE_MAX_AGE_SEC = 24 * 60 * 60;
 const MINICODE_MEM_CACHE_MAX_AGE_MS = MINICODE_HTTP_CACHE_MAX_AGE_SEC * 1000;
+const ROOM_IMAGE_ACCESS_TTL_SEC = Number(config.ROOM_IMAGE_ACCESS_TTL_SEC || 300);
+const ROOM_IMAGE_RATE_LIMIT_WINDOW_MS = Number(config.ROOM_IMAGE_RATE_LIMIT_WINDOW_MS || 60000);
+const ROOM_IMAGE_RATE_LIMIT_MAX = Number(config.ROOM_IMAGE_RATE_LIMIT_MAX || 30);
 const roomMiniCodeCache = new Map();
+const roomImageIssueRateLimit = new Map();
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -131,6 +140,144 @@ function pruneExpiredRoomMiniCodeCache(nowMs) {
 }
 
 /**
+ * 校验房间号格式。
+ *
+ * @param {string} roomCode
+ * @returns {boolean}
+ */
+function isValidRoomCode(roomCode) {
+  return /^[0-9A-Z]{4,12}$/.test(String(roomCode || "").trim().toUpperCase());
+}
+
+/**
+ * 校验用户当前是否仍在指定房间。
+ *
+ * @param {string} openId
+ * @param {string} roomCode
+ * @returns {boolean}
+ */
+function isUserInRoom(openId, roomCode) {
+  const mapping = store.getUserRoom(openId);
+  const userRoomCode = String((mapping && mapping.roomCode) || "").trim().toUpperCase();
+  return !!userRoomCode && userRoomCode === roomCode;
+}
+
+/**
+ * 清理过期限流窗口，避免内存增长。
+ *
+ * @param {number} nowMs
+ */
+function pruneRoomImageRateLimit(nowMs) {
+  for (const [key, entry] of roomImageIssueRateLimit.entries()) {
+    const windowStartAt = Number((entry && entry.windowStartAt) || 0);
+    if (!windowStartAt || nowMs - windowStartAt >= ROOM_IMAGE_RATE_LIMIT_WINDOW_MS) {
+      roomImageIssueRateLimit.delete(key);
+    }
+  }
+}
+
+/**
+ * 对“签发邀请码图片链接”做基础限流（openId + sourceIp）。
+ *
+ * @param {import("express").Request} req
+ * @param {string} openId
+ * @returns {{ok: true} | {ok: false, retryAfterMs: number}}
+ */
+function consumeRoomImageIssueRateLimit(req, openId) {
+  const nowMs = Date.now();
+  pruneRoomImageRateLimit(nowMs);
+
+  const sourceIp = getRateLimitIp(req);
+  const key = `${String(openId || "").trim()}|${sourceIp}`;
+  const hit = roomImageIssueRateLimit.get(key);
+  if (!hit || nowMs - Number(hit.windowStartAt || 0) >= ROOM_IMAGE_RATE_LIMIT_WINDOW_MS) {
+    roomImageIssueRateLimit.set(key, {
+      windowStartAt: nowMs,
+      count: 1
+    });
+    return { ok: true };
+  }
+
+  const nextCount = Number(hit.count || 0) + 1;
+  if (nextCount > ROOM_IMAGE_RATE_LIMIT_MAX) {
+    const retryAfterMs = Math.max(
+      0,
+      ROOM_IMAGE_RATE_LIMIT_WINDOW_MS - (nowMs - Number(hit.windowStartAt || nowMs))
+    );
+    return { ok: false, retryAfterMs };
+  }
+
+  roomImageIssueRateLimit.set(key, {
+    windowStartAt: Number(hit.windowStartAt || nowMs),
+    count: nextCount
+  });
+  return { ok: true };
+}
+
+/**
+ * 校验图片访问签名（短时 token）。
+ *
+ * @param {import("express").Request} req
+ * @param {"minicode"|"qrcode"} asset
+ * @param {string} roomCode
+ * @returns {{
+ *   ok: true,
+ *   openId: string,
+ *   envVersion: "develop"|"trial"|"release"
+ * } | {
+ *   ok: false,
+ *   httpStatus: number,
+ *   code: "INVALID_ACCESS_TOKEN"|"FORBIDDEN",
+ *   openId: string
+ * }}
+ */
+function verifyRoomImageRequestAccess(req, asset, roomCode) {
+  const access = String((req.query && req.query.access) || "").trim();
+  if (!access) {
+    return {
+      ok: false,
+      httpStatus: 401,
+      code: "INVALID_ACCESS_TOKEN",
+      openId: ""
+    };
+  }
+
+  const payload = verifyRoomImageAccessToken(access);
+  if (!payload) {
+    return {
+      ok: false,
+      httpStatus: 401,
+      code: "INVALID_ACCESS_TOKEN",
+      openId: ""
+    };
+  }
+
+  if (payload.asset !== asset || payload.roomCode !== roomCode) {
+    return {
+      ok: false,
+      httpStatus: 401,
+      code: "INVALID_ACCESS_TOKEN",
+      openId: payload.openId
+    };
+  }
+
+  if (!isUserInRoom(payload.openId, roomCode)) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      code: "FORBIDDEN",
+      openId: payload.openId
+    };
+  }
+
+  return {
+    ok: true,
+    openId: payload.openId,
+    envVersion: normalizeMiniCodeEnvVersion(payload.envVersion || "")
+  };
+}
+
+/**
  * 统一输出成功。
  */
 function ok(res, data) {
@@ -160,6 +307,20 @@ function getClientIp(req) {
   const xff = String(req.headers["x-forwarded-for"] || "").trim();
   if (xff) return String(xff.split(",")[0] || "").trim();
   return String(req.socket && req.socket.remoteAddress || "");
+}
+
+/**
+ * 获取“限流键”使用的来源 IP（不可直接受 x-forwarded-for 影响）。
+ * 优先取 socket 来源地址；缺失时退回 Express 的 req.ip。
+ *
+ * @param {import("express").Request} req
+ * @returns {string}
+ */
+function getRateLimitIp(req) {
+  const socketIp = String((req && req.socket && req.socket.remoteAddress) || "").trim();
+  if (socketIp) return socketIp;
+  const expressIp = String((req && req.ip) || "").trim();
+  return expressIp || "unknown";
 }
 
 /**
@@ -772,20 +933,106 @@ app.get("/api/settlements/:roomCode", authMiddleware, async (req, res) => {
 });
 
 /**
- * 房间小程序码（公共资源）：
- * - 码内容落点为 /pages/home/home?roomCode=XXXX
- * - 图片资源无法方便地携带 Authorization header，因此这里不强制鉴权。
+ * 签发房间邀请码图片访问链接（需要登录 + 必须在房间内）。
+ */
+app.get("/api/rooms/:roomCode/share-codes", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+  const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
+  const envVersion = normalizeMiniCodeEnvVersion((req.query && req.query.envVersion) || "");
+  if (!isValidRoomCode(roomCode)) {
+    routeLog(req, "warn", "room.share_codes.issue.fail", "签发邀请码失败：房间号无效", {
+      code: "INVALID_ROOM_CODE"
+    });
+    return fail(res, "INVALID_ROOM_CODE", "房间号无效");
+  }
+
+  if (!isUserInRoom(openId, roomCode)) {
+    routeLog(req, "warn", "room.share_codes.issue.fail", "签发邀请码失败：用户不在房间中", {
+      code: "FORBIDDEN",
+      roomCode
+    });
+    return fail(res, "FORBIDDEN", "你不在该房间中");
+  }
+
+  const rateLimitResult = consumeRoomImageIssueRateLimit(req, openId);
+  if (!rateLimitResult.ok) {
+    routeLog(req, "warn", "room.share_codes.issue.fail", "签发邀请码失败：请求过于频繁", {
+      code: "RATE_LIMITED",
+      roomCode,
+      retryAfterMs: rateLimitResult.retryAfterMs
+    });
+    return fail(res, "RATE_LIMITED", "请求过于频繁，请稍后重试");
+  }
+
+  try {
+    const minicodeAccess = signRoomImageAccessToken({
+      asset: "minicode",
+      roomCode,
+      openId,
+      envVersion
+    });
+    const qrcodeAccess = signRoomImageAccessToken({
+      asset: "qrcode",
+      roomCode,
+      openId
+    });
+    const expireAt = Date.now() + ROOM_IMAGE_ACCESS_TTL_SEC * 1000;
+    const minicodeUrl =
+      `/api/rooms/${encodeURIComponent(roomCode)}/minicode.png` +
+      `?access=${encodeURIComponent(minicodeAccess)}`;
+    const qrcodeUrl =
+      `/api/rooms/${encodeURIComponent(roomCode)}/qrcode.png` +
+      `?access=${encodeURIComponent(qrcodeAccess)}`;
+
+    routeLog(req, "info", "room.share_codes.issue.ok", "签发邀请码成功", {
+      roomCode,
+      envVersion,
+      expireAt
+    });
+
+    return ok(res, {
+      joinCode: {
+        minicodeUrl,
+        qrcodeUrl,
+        expireAt
+      }
+    });
+  } catch (err) {
+    routeLog(req, "error", "room.share_codes.issue.fail", "签发邀请码异常", {
+      code: "INTERNAL_ERROR",
+      roomCode,
+      envVersion,
+      errMsg: String((err && err.message) || err || "")
+    });
+    return fail(res, "INTERNAL_ERROR", "邀请码生成失败，请稍后重试");
+  }
+});
+
+/**
+ * 房间小程序码图片（需要短时签名 access）。
  */
 app.get("/api/rooms/:roomCode/minicode.png", async (req, res) => {
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
-  const envVersion = normalizeMiniCodeEnvVersion((req.query && req.query.envVersion) || "");
-  if (!/^[0-9A-Z]{4,12}$/.test(roomCode)) {
+  if (!isValidRoomCode(roomCode)) {
     routeLog(req, "warn", "room.minicode.fail", "生成房间小程序码失败：房间号无效", {
       code: "INVALID_ROOM_CODE"
     });
     res.status(400).end();
     return;
   }
+
+  const accessResult = verifyRoomImageRequestAccess(req, "minicode", roomCode);
+  if (!accessResult.ok) {
+    routeLog(req, "warn", "room.image_access.deny", "房间图片访问拒绝", {
+      code: accessResult.code,
+      roomCode,
+      asset: "minicode",
+      openId: accessResult.openId
+    });
+    res.status(accessResult.httpStatus).end();
+    return;
+  }
+  const envVersion = accessResult.envVersion;
 
   const nowMs = Date.now();
   const cacheKey = `${roomCode}:${envVersion}`;
@@ -837,16 +1084,27 @@ app.get("/api/rooms/:roomCode/minicode.png", async (req, res) => {
 });
 
 /**
- * 入房二维码（公共资源）：二维码内容为 PLROOM:ROOMCODE
- * 说明：图片资源无法方便地携带 Authorization header，因此这里不强制鉴权。
+ * 入房二维码（需要短时签名 access）：二维码内容为 PLROOM:ROOMCODE
  */
 app.get("/api/rooms/:roomCode/qrcode.png", async (req, res) => {
   const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
-  if (!roomCode) {
-    routeLog(req, "warn", "room.qrcode.fail", "生成入房二维码失败：房间号为空", {
+  if (!isValidRoomCode(roomCode)) {
+    routeLog(req, "warn", "room.qrcode.fail", "生成入房二维码失败：房间号无效", {
       code: "INVALID_ROOM_CODE"
     });
     res.status(400).end();
+    return;
+  }
+
+  const accessResult = verifyRoomImageRequestAccess(req, "qrcode", roomCode);
+  if (!accessResult.ok) {
+    routeLog(req, "warn", "room.image_access.deny", "房间图片访问拒绝", {
+      code: accessResult.code,
+      roomCode,
+      asset: "qrcode",
+      openId: accessResult.openId
+    });
+    res.status(accessResult.httpStatus).end();
     return;
   }
 

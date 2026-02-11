@@ -10,6 +10,19 @@ function mustGetEnv(key) {
   return v;
 }
 
+/**
+ * 读取正整数环境变量；非法值回退到默认值。
+ *
+ * @param {any} raw
+ * @param {number} fallback
+ * @returns {number}
+ */
+function toPositiveInt(raw, fallback) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
 module.exports = {
   // HTTP 端口
   PORT: Number(process.env.PORT || 3000),
@@ -31,5 +44,14 @@ module.exports = {
   LOG_LEVEL: String(process.env.LOG_LEVEL || "info"),
 
   // HTTP 访问日志开关：1 开启，0 关闭（默认开启）
-  LOG_HTTP_ACCESS: String(process.env.LOG_HTTP_ACCESS || "1") !== "0"
+  LOG_HTTP_ACCESS: String(process.env.LOG_HTTP_ACCESS || "1") !== "0",
+
+  // 房间邀请码图片访问 token 过期时间（秒）
+  ROOM_IMAGE_ACCESS_TTL_SEC: toPositiveInt(process.env.ROOM_IMAGE_ACCESS_TTL_SEC, 300),
+
+  // 房间邀请码签发接口限流窗口（毫秒）
+  ROOM_IMAGE_RATE_LIMIT_WINDOW_MS: toPositiveInt(process.env.ROOM_IMAGE_RATE_LIMIT_WINDOW_MS, 60000),
+
+  // 房间邀请码签发接口限流上限（每窗口）
+  ROOM_IMAGE_RATE_LIMIT_MAX: toPositiveInt(process.env.ROOM_IMAGE_RATE_LIMIT_MAX, 30)
 };
