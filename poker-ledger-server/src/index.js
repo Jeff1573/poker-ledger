@@ -8,7 +8,7 @@ const multer = require("multer");
 
 const config = require("./config");
 const store = require("./store");
-const { codeToOpenId } = require("./wechat");
+const { codeToOpenId, generateRoomMiniCode } = require("./wechat");
 const { signToken, authMiddleware } = require("./auth");
 const { createWsHub } = require("./wsHub");
 const logger = require("./logger");
@@ -73,6 +73,9 @@ const LEADERBOARD_DEFAULT_LIMIT = 100;
 const LEADERBOARD_MAX_LIMIT = 200;
 const HISTORY_DEFAULT_LIMIT = 20;
 const HISTORY_MAX_LIMIT = 50;
+const MINICODE_HTTP_CACHE_MAX_AGE_SEC = 24 * 60 * 60;
+const MINICODE_MEM_CACHE_MAX_AGE_MS = MINICODE_HTTP_CACHE_MAX_AGE_SEC * 1000;
+const roomMiniCodeCache = new Map();
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -97,6 +100,34 @@ function parsePositiveIntParam(raw) {
   const n = Number(text);
   if (!Number.isInteger(n) || n <= 0) return null;
   return n;
+}
+
+/**
+ * 归一化小程序码环境版本。
+ *
+ * @param {any} raw
+ * @returns {"develop"|"trial"|"release"}
+ */
+function normalizeMiniCodeEnvVersion(raw) {
+  const envVersion = String(raw || "").trim().toLowerCase();
+  if (envVersion === "develop" || envVersion === "trial" || envVersion === "release") {
+    return envVersion;
+  }
+  return "release";
+}
+
+/**
+ * 清理过期的小程序码缓存，避免缓存无限增长。
+ *
+ * @param {number} nowMs
+ */
+function pruneExpiredRoomMiniCodeCache(nowMs) {
+  for (const [key, entry] of roomMiniCodeCache.entries()) {
+    const cachedAt = Number((entry && entry.cachedAt) || 0);
+    if (!cachedAt || nowMs - cachedAt > MINICODE_MEM_CACHE_MAX_AGE_MS) {
+      roomMiniCodeCache.delete(key);
+    }
+  }
 }
 
 /**
@@ -738,6 +769,71 @@ app.get("/api/settlements/:roomCode", authMiddleware, async (req, res) => {
     roomCode
   });
   return ok(res, { settlement: r.settlement });
+});
+
+/**
+ * 房间小程序码（公共资源）：
+ * - 码内容落点为 /pages/home/home?roomCode=XXXX
+ * - 图片资源无法方便地携带 Authorization header，因此这里不强制鉴权。
+ */
+app.get("/api/rooms/:roomCode/minicode.png", async (req, res) => {
+  const roomCode = String(req.params.roomCode || "").trim().toUpperCase();
+  const envVersion = normalizeMiniCodeEnvVersion((req.query && req.query.envVersion) || "");
+  if (!/^[0-9A-Z]{4,12}$/.test(roomCode)) {
+    routeLog(req, "warn", "room.minicode.fail", "生成房间小程序码失败：房间号无效", {
+      code: "INVALID_ROOM_CODE"
+    });
+    res.status(400).end();
+    return;
+  }
+
+  const nowMs = Date.now();
+  const cacheKey = `${roomCode}:${envVersion}`;
+  pruneExpiredRoomMiniCodeCache(nowMs);
+  const cached = roomMiniCodeCache.get(cacheKey);
+  if (cached && Buffer.isBuffer(cached.png)) {
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", `public, max-age=${MINICODE_HTTP_CACHE_MAX_AGE_SEC}`);
+    res.end(cached.png);
+    routeLog(req, "debug", "room.minicode.cache_hit", "命中房间小程序码缓存", {
+      roomCode,
+      envVersion
+    });
+    return;
+  }
+
+  try {
+    const result = await generateRoomMiniCode(roomCode, envVersion);
+    if (!result.ok) {
+      routeLog(req, "warn", "room.minicode.fail", "生成房间小程序码失败", {
+        code: String(result.code || ""),
+        roomCode,
+        envVersion
+      });
+      const statusCode = result.code === "WECHAT_SECRET_MISSING" ? 500 : 502;
+      res.status(statusCode).end();
+      return;
+    }
+
+    roomMiniCodeCache.set(cacheKey, {
+      png: result.png,
+      cachedAt: Date.now()
+    });
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", `public, max-age=${MINICODE_HTTP_CACHE_MAX_AGE_SEC}`);
+    res.end(result.png);
+    routeLog(req, "debug", "room.minicode.ok", "生成房间小程序码成功", {
+      roomCode,
+      envVersion
+    });
+  } catch (err) {
+    routeLog(req, "error", "room.minicode.fail", "生成房间小程序码异常", {
+      roomCode,
+      envVersion,
+      errMsg: String((err && err.message) || err || "")
+    });
+    res.status(500).end();
+  }
 });
 
 /**

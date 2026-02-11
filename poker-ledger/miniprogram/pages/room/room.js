@@ -7,6 +7,25 @@ const log = require("../../utils/log");
 
 const TX_PAGE_SIZE = 100;
 const TX_FRONT_SOFT_LIMIT = 500;
+const VALID_MINICODE_ENV_VERSIONS = new Set(["develop", "trial", "release"]);
+
+/**
+ * 获取当前小程序环境版本（develop / trial / release）。
+ *
+ * @returns {"develop"|"trial"|"release"}
+ */
+function getCurrentMiniEnvVersion() {
+  try {
+    const info = typeof wx.getAccountInfoSync === "function" ? wx.getAccountInfoSync() : null;
+    const envVersion = String((((info || {}).miniProgram || {}).envVersion) || "").trim().toLowerCase();
+    if (VALID_MINICODE_ENV_VERSIONS.has(envVersion)) {
+      return envVersion;
+    }
+  } catch (err) {
+    // ignore
+  }
+  return "release";
+}
 
 /**
  * 交易排序：时间倒序；同毫秒下按 id 倒序，确保分页边界稳定。
@@ -115,7 +134,8 @@ Page({
 
     // 入房码弹层
     showJoinCode: false,
-    joinCodeUrl: ""
+    joinCodeUrl: "",
+    joinCodeLoadError: false
   },
 
   onLoad() {
@@ -199,7 +219,8 @@ Page({
       transferAmountText: "",
       transferCanSubmit: false,
       showJoinCode: false,
-      joinCodeUrl: ""
+      joinCodeUrl: "",
+      joinCodeLoadError: false
     });
   },
 
@@ -1012,17 +1033,40 @@ Page({
 
   async handleShowJoinCode() {
     if (this.data.viewState !== "in_room") return;
-    if (this.data.role !== "owner") return;
     if (this.data.loading) return;
 
-    // 说明：图片资源无法方便携带 Authorization header，因此后端以“公共二维码”方式返回 png
+    // 说明：图片资源无法方便携带 Authorization header，因此后端以“公共图片”方式返回 png
     const base = String(CONST.API_BASE_URL || "").replace(/\/$/, "");
-    const joinCodeUrl = `${base}/api/rooms/${this.data.roomCode}/qrcode.png?t=${Date.now()}`;
-    this.setData({ joinCodeUrl, showJoinCode: true });
+    const envVersion = getCurrentMiniEnvVersion();
+    const joinCodeUrl =
+      `${base}/api/rooms/${this.data.roomCode}/minicode.png` +
+      `?envVersion=${encodeURIComponent(envVersion)}`;
+    this.setData({
+      joinCodeUrl,
+      joinCodeLoadError: false,
+      showJoinCode: true
+    });
+  },
+
+  handleJoinCodeImageLoad() {
+    if (!this.data.showJoinCode) return;
+    if (!this.data.joinCodeLoadError) return;
+    this.setData({ joinCodeLoadError: false });
+  },
+
+  handleJoinCodeImageError() {
+    if (!this.data.showJoinCode) return;
+    if (!this.data.joinCodeLoadError) {
+      this.toast("邀请码图加载失败，请稍后重试");
+    }
+    this.setData({ joinCodeLoadError: true });
   },
 
   closeJoinCode() {
-    this.setData({ showJoinCode: false });
+    this.setData({
+      showJoinCode: false,
+      joinCodeLoadError: false
+    });
   },
 
   /**
@@ -1033,21 +1077,12 @@ Page({
   },
 
   /**
-   * 引导用户通过右上角菜单分享。
-   *
-   * 说明：
-   * - 未认证账号在部分环境下，按钮 open-type="share" 可能受限；
-   * - 右上角菜单仍可触发 onShareAppMessage，因此统一引导到该入口。
+   * 打开邀请码图弹层，用户可长按图片“发送给朋友”。
    */
   handleShareByMenuTip() {
     if (this.data.viewState !== "in_room") return;
     if (this.data.showShareGuide) this.closeShareGuide();
-    wx.showModal({
-      title: "分享邀请",
-      content: "请点击右上角“...”后选择“发送给朋友”，即可邀请他人加入当前房间。",
-      showCancel: false,
-      confirmText: "知道了"
-    });
+    this.handleShowJoinCode();
   },
 
   async handleLeave() {

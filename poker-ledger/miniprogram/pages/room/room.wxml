@@ -161,7 +161,20 @@
 <view wx:if="{{viewState === 'in_room' && showJoinCode}}" class="overlay" bindtap="closeJoinCode">
   <view class="overlay-card" catchtap="noop">
     <view class="title">扫码加入</view>
-    <image class="qrcode" src="{{joinCodeUrl}}" mode="aspectFit" />
+    <image
+      class="qrcode"
+      src="{{joinCodeUrl}}"
+      mode="aspectFit"
+      show-menu-by-longpress="{{true}}"
+      binderror="handleJoinCodeImageError"
+      bindload="handleJoinCodeImageLoad"
+    />
+    <view class="subtle join-code-tip" wx:if="{{!joinCodeLoadError}}">
+      长按图片可发送给朋友，好友识别后可加入当前房间。
+    </view>
+    <view class="subtle join-code-tip join-code-tip-error" wx:else>
+      邀请码图加载失败，请稍后重试。
+    </view>
     <button class="btn-primary" style="margin-top: 16rpx;" bindtap="closeJoinCode">关闭</button>
   </view>
 </view>
@@ -171,7 +184,7 @@
   <view class="overlay-card share-guide-card" catchtap="noop">
     <view class="title">邀请成员</view>
     <view class="subtle" style="margin-top: 12rpx;">
-      当前请通过右上角“...”发起分享，发送给群聊或个人后可直接加入当前房间。
+      点击上方“分享邀请”按钮，打开邀请码图后长按发送给朋友，即可邀请加入当前房间。
     </view>
 
     <view class="row share-guide-actions" style="margin-top: 22rpx;">
