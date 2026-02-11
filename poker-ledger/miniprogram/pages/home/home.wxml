@@ -70,7 +70,7 @@
     </view>
   </view>
 
-  <!-- 当前房间状态：用户点击首页 tab 时不再强制跳转，由用户手动继续房间 -->
+  <!-- 当前房间状态：首次进入且已在房间会自动跳转；手动切回首页后由用户继续房间 -->
   <view wx:if="{{inRoom}}" class="card active-room-card">
     <view class="title">当前房间 {{activeRoomCode}}</view>
     <view wx:if="{{activeRoomIsOwner}}" class="subtle active-room-subtle">

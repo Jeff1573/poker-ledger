@@ -93,7 +93,7 @@ Page({
     draftDisplayName: "",
     canSaveProfile: false,
 
-    // 首页房间状态：用于“手动继续房间/退出房间”，避免点首页 tab 后被强制跳转。
+    // 首页房间状态：首次进入且已在房间会自动跳转；手动回首页后仍可继续/退出。
     inRoom: false,
     activeRoomCode: "",
     activeRoomRole: "",
@@ -101,6 +101,10 @@ Page({
   },
 
   onLoad(options) {
+    // 仅在本次进入小程序后的首次首页初始化中，允许自动跳转房间 tab 一次。
+    this._entryAutoJumpChecked = false;
+    this._autoSwitchingRoom = false;
+
     const last = storage.getLastRoomCode();
     const pendingRoomCode = extractInviteRoomCodeFromOptions(options);
 
@@ -185,7 +189,21 @@ Page({
         activeRoomIsOwner: activeRoomRole === "owner"
       });
 
-      // 2) 用户已在房间时不执行自动入房，避免邀请流程误触发“重复加入”。
+      // 2) 首次进入首页且已在房间时，优先自动跳转到房间 tab。
+      // 首次检查定义：本次小程序运行周期内，首页首次成功完成 /api/me 判断。
+      const isFirstEntryCheck = !this._entryAutoJumpChecked;
+      if (isFirstEntryCheck) this._entryAutoJumpChecked = true;
+
+      if (isFirstEntryCheck && inRoom) {
+        if (this.data.pendingRoomCode) {
+          // 清空一次性邀请标记，避免后续 onShow/退出后被历史邀请码反复触发。
+          this.setData({ pendingRoomCode: "" });
+        }
+        await this.switchToRoomTabWithFallback();
+        return;
+      }
+
+      // 3) 非首次检查时，已在房间仅展示“当前房间”卡片，不强制跳转。
       if (inRoom) {
         if (this.data.pendingRoomCode) {
           // 清空一次性邀请标记，避免后续 onShow/退出后被历史邀请码反复触发。
@@ -194,7 +212,7 @@ Page({
         return;
       }
 
-      // 3) 如果携带邀请码且已授权，尝试自动加入
+      // 4) 如果携带邀请码且已授权，尝试自动加入
       if (this.data.pendingRoomCode && hasProfile) {
         // 先清空 pending，避免自动加入失败后每次 onShow 都重复重试。
         const inviteRoomCode = String(this.data.pendingRoomCode || "").trim().toUpperCase();
@@ -219,10 +237,34 @@ Page({
   },
 
   /**
-   * 继续当前房间：仅做显式跳转，不在首页 onShow 阶段强制跳转。
+   * 切换到房间 tab；失败时兜底 reLaunch，避免极端场景停留在首页。
+   */
+  switchToRoomTabWithFallback() {
+    if (this._autoSwitchingRoom) return Promise.resolve(false);
+    this._autoSwitchingRoom = true;
+
+    return new Promise((resolve) => {
+      wx.switchTab({
+        url: "/pages/room/room",
+        success: () => resolve(true),
+        fail: () => {
+          wx.reLaunch({
+            url: "/pages/room/room",
+            success: () => resolve(true),
+            fail: () => resolve(false)
+          });
+        }
+      });
+    }).finally(() => {
+      this._autoSwitchingRoom = false;
+    });
+  },
+
+  /**
+   * 继续当前房间：用户显式点击入口。
    */
   handleContinueRoom() {
-    wx.switchTab({ url: "/pages/room/room" });
+    this.switchToRoomTabWithFallback();
   },
 
   /**
