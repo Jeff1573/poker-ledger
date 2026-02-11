@@ -266,7 +266,7 @@ page {
 }
 
 .auth-btn {
-  margin-left: 0;
+  margin-left: 10rpx;
 }
 
 .auth-single-btn {
