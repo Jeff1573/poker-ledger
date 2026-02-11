@@ -316,7 +316,14 @@ Page({
       const app = getApp();
       const r = await app.apiCall({ path: "/api/rooms/leave", method: "POST", data: {} });
       if (!r || !r.ok) {
+        const code = String((r && r.code) || "")
+          .trim()
+          .toUpperCase();
         this.toast((r && r.message) || "退出房间失败");
+        // 自愈：后端已判定“你不在房间/房间不存在”时，回读 me 修正本地 inRoom 门禁状态。
+        if (code === "NOT_IN_ROOM" || code === "ROOM_NOT_FOUND") {
+          await this.bootstrap();
+        }
         return;
       }
 
