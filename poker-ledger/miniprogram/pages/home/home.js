@@ -71,7 +71,7 @@ function extractInviteRoomCodeFromOptions(options) {
  * 首页职责：
  * 1) 获取用户授权信息（头像/昵称）
  * 2) 创建房间（房主）/ 加入房间（成员）/ 扫码加入
- * 3) 若用户仍在房间内，自动恢复进入房间页
+ * 3) 若用户仍在房间内，首页展示房间状态并允许手动继续/退出
  *
  * 说明：本项目已放弃微信云开发，所有数据由自建 Node.js 后端提供（HTTP + WebSocket）。
  */
@@ -91,7 +91,13 @@ Page({
     draftAvatarLocal: "",
     draftAvatarPath: "",
     draftDisplayName: "",
-    canSaveProfile: false
+    canSaveProfile: false,
+
+    // 首页房间状态：用于“手动继续房间/退出房间”，避免点首页 tab 后被强制跳转。
+    inRoom: false,
+    activeRoomCode: "",
+    activeRoomRole: "",
+    activeRoomIsOwner: false
   },
 
   onLoad(options) {
@@ -143,9 +149,9 @@ Page({
 
   /**
    * 启动引导：
-   * - 先通过 /api/me 判断是否仍在房间中，若是直接跳转 room
+   * - 先通过 /api/me 判断是否仍在房间中，首页展示“当前房间”状态卡
    * - 再判断是否已有用户档案（是否完成授权）
-   * - 若是扫码进入且已授权，则尝试自动加入
+   * - 若是扫码进入且已授权，且当前不在房间中，则尝试自动加入
    */
   async bootstrap() {
     if (this._booting) return;
@@ -163,20 +169,30 @@ Page({
         return;
       }
 
-      // 1) 若仍在房间内，直接恢复
-      if (me.inRoom && me.roomCode) {
-        wx.switchTab({ url: "/pages/room/room" });
-        return;
-      }
-
-      // 2) 更新用户档案与授权状态
+      // 1) 更新用户档案、授权状态与当前房间状态
+      const inRoom = !!(me.inRoom && me.roomCode);
+      const activeRoomCode = inRoom ? String(me.roomCode || "").trim().toUpperCase() : "";
+      const activeRoomRole = inRoom ? String(me.role || "").trim().toLowerCase() : "";
       const user = me.user || null;
       const hasProfile = !!(user && user.displayName && user.avatarUrlWx);
       this.setData({
         user,
         hasProfile,
-        userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx)
+        userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx),
+        inRoom,
+        activeRoomCode,
+        activeRoomRole,
+        activeRoomIsOwner: activeRoomRole === "owner"
       });
+
+      // 2) 用户已在房间时不执行自动入房，避免邀请流程误触发“重复加入”。
+      if (inRoom) {
+        if (this.data.pendingRoomCode) {
+          // 清空一次性邀请标记，避免后续 onShow/退出后被历史邀请码反复触发。
+          this.setData({ pendingRoomCode: "" });
+        }
+        return;
+      }
 
       // 3) 如果携带邀请码且已授权，尝试自动加入
       if (this.data.pendingRoomCode && hasProfile) {
@@ -200,6 +216,89 @@ Page({
 
   goLeaderboard() {
     wx.navigateTo({ url: "/pages/leaderboard/leaderboard" });
+  },
+
+  /**
+   * 继续当前房间：仅做显式跳转，不在首页 onShow 阶段强制跳转。
+   */
+  handleContinueRoom() {
+    wx.switchTab({ url: "/pages/room/room" });
+  },
+
+  /**
+   * 从首页退出当前房间（仅成员可退出；房主需去房间页解散）。
+   */
+  async handleLeaveCurrentRoom() {
+    if (!this.data.inRoom || !this.data.activeRoomCode) return;
+    if (this._leavingRoom) return;
+
+    // 协议约束：房主不能调用 leave，只能去房间页执行 dissolve。
+    if (this.data.activeRoomIsOwner) {
+      const ownerRes = await new Promise((resolve, reject) => {
+        wx.showModal({
+          title: "你是房主",
+          content: "房主不能直接退出，请前往房间页解散房间。",
+          confirmText: "去房间页",
+          cancelText: "取消",
+          success: resolve,
+          fail: reject
+        });
+      }).catch(() => null);
+
+      if (ownerRes && ownerRes.confirm) {
+        this.handleContinueRoom();
+      }
+      return;
+    }
+
+    const roomCode = String(this.data.activeRoomCode || "").trim().toUpperCase();
+    const confirmRes = await new Promise((resolve, reject) => {
+      wx.showModal({
+        title: "退出房间",
+        content: `确定退出房间 ${roomCode} 吗？`,
+        confirmText: "退出",
+        confirmColor: "#C93B2E",
+        cancelText: "取消",
+        success: resolve,
+        fail: reject
+      });
+    }).catch(() => null);
+
+    if (!confirmRes || !confirmRes.confirm) return;
+
+    this._leavingRoom = true;
+    const wasLoading = !!this.data.loading;
+    if (!wasLoading) this.setData({ loading: true });
+
+    try {
+      const app = getApp();
+      const r = await app.apiCall({ path: "/api/rooms/leave", method: "POST", data: {} });
+      if (!r || !r.ok) {
+        this.toast((r && r.message) || "退出房间失败");
+        return;
+      }
+
+      wx.showToast({
+        title: "已退出房间",
+        icon: "success",
+        duration: 1200
+      });
+
+      // 先更新本地展示，再刷新 me，保证按钮态和后端状态同步。
+      this.setData({
+        inRoom: false,
+        activeRoomCode: "",
+        activeRoomRole: "",
+        activeRoomIsOwner: false
+      });
+      await this.bootstrap();
+    } catch (err) {
+      console.error("首页退出房间失败", err);
+      this.toast("退出房间失败，请稍后重试");
+    } finally {
+      if (!wasLoading) this.setData({ loading: false });
+      this._leavingRoom = false;
+    }
   },
 
   /**
@@ -422,6 +521,10 @@ Page({
       this.toast("请先授权获取头像昵称");
       return;
     }
+    if (this.data.inRoom) {
+      this.toast("你已在房间中，请先退出当前房间");
+      return;
+    }
 
     if (this.data.loading) return;
     this.setData({ loading: true });
@@ -452,6 +555,10 @@ Page({
       this.toast("请先授权获取头像昵称");
       return;
     }
+    if (this.data.inRoom) {
+      this.toast("你已在房间中，请先退出当前房间");
+      return;
+    }
 
     const v = validateRoomCode(this.data.roomCodeInput);
     if (!v.ok) {
@@ -465,6 +572,10 @@ Page({
   async handleScanJoin() {
     if (!this.data.hasProfile) {
       this.toast("请先授权获取头像昵称");
+      return;
+    }
+    if (this.data.inRoom) {
+      this.toast("你已在房间中，请先退出当前房间");
       return;
     }
 

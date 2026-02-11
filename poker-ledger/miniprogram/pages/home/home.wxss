@@ -282,6 +282,26 @@ page {
   font-weight: 600;
 }
 
+.active-room-card {
+  margin-top: 4rpx;
+  border-color: rgba(31, 108, 89, 0.18);
+  background: linear-gradient(180deg, rgba(255, 254, 250, 0.98) 0%, rgba(244, 239, 228, 0.92) 100%);
+}
+
+.active-room-subtle {
+  margin-top: 10rpx;
+}
+
+.active-room-actions {
+  margin-top: 18rpx;
+  align-items: center;
+}
+
+.active-room-side-btn {
+  margin-left: 14rpx;
+  width: 228rpx;
+}
+
 .room-card {
   margin-top: 4rpx;
 }

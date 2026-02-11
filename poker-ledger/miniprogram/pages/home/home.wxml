@@ -70,13 +70,47 @@
     </view>
   </view>
 
+  <!-- 当前房间状态：用户点击首页 tab 时不再强制跳转，由用户手动继续房间 -->
+  <view wx:if="{{inRoom}}" class="card active-room-card">
+    <view class="title">当前房间 {{activeRoomCode}}</view>
+    <view wx:if="{{activeRoomIsOwner}}" class="subtle active-room-subtle">
+      你是房主，请前往房间页继续记账或解散房间。
+    </view>
+    <view wx:else class="subtle active-room-subtle">
+      你已在房间中，可继续记账，或先退出再加入其他房间。
+    </view>
+
+    <view class="row active-room-actions">
+      <button class="btn-primary" style="flex: 1;" bindtap="handleContinueRoom" disabled="{{loading}}">
+        进入房间
+      </button>
+      <button
+        wx:if="{{!activeRoomIsOwner}}"
+        class="btn-plain active-room-side-btn"
+        bindtap="handleLeaveCurrentRoom"
+        disabled="{{loading}}"
+      >
+        退出房间
+      </button>
+      <!-- <button
+        wx:else
+        class="btn-plain active-room-side-btn"
+        bindtap="handleContinueRoom"
+        disabled="{{loading}}"
+      >
+        去房间页解散
+      </button> -->
+    </view>
+  </view>
+
   <!-- 房间创建/加入 -->
-  <view class="card room-card {{hasProfile ? '' : 'room-card-disabled'}}">
+  <view class="card room-card {{hasProfile && !inRoom ? '' : 'room-card-disabled'}}">
     <view class="title">房间</view>
-    <view wx:if="{{!hasProfile}}" class="subtle room-auth-tip">未授权时不可操作，请先完成上方授权登录。</view>
+    <view wx:if="{{inRoom}}" class="subtle room-auth-tip">你已在房间中，需先退出当前房间再创建或加入新房间。</view>
+    <view wx:elif="{{!hasProfile}}" class="subtle room-auth-tip">未授权时不可操作，请先完成上方授权登录。</view>
 
     <view class="row" style="margin-top: 18rpx;">
-      <button class="btn-primary" style="flex: 1;" bindtap="handleCreateRoom" disabled="{{!hasProfile || loading}}">
+      <button class="btn-primary" style="flex: 1;" bindtap="handleCreateRoom" disabled="{{!hasProfile || inRoom || loading}}">
         创建房间（房主）
       </button>
     </view>
@@ -88,15 +122,15 @@
         value="{{roomCodeInput}}"
         bindinput="handleRoomCodeInput"
         maxlength="12"
-        disabled="{{!hasProfile || loading}}"
+        disabled="{{!hasProfile || inRoom || loading}}"
       />
-      <button class="btn-primary join-btn" bindtap="handleJoinRoom" disabled="{{!hasProfile || loading}}">
+      <button class="btn-primary join-btn" bindtap="handleJoinRoom" disabled="{{!hasProfile || inRoom || loading}}">
         加入
       </button>
     </view>
 
     <view class="row" style="margin-top: 18rpx;">
-      <button class="btn-plain" style="flex: 1;" bindtap="handleScanJoin" disabled="{{!hasProfile || loading}}">
+      <button class="btn-plain" style="flex: 1;" bindtap="handleScanJoin" disabled="{{!hasProfile || inRoom || loading}}">
         扫码加入
       </button>
     </view>
