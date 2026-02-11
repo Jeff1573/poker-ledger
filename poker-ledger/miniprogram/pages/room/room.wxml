@@ -23,44 +23,63 @@
   </view>
 
   <!-- 房间信息 -->
-  <view class="card room-frame-card {{viewState !== 'in_room' ? 'room-frame-disabled' : ''}}">
-    <view class="row-between">
-      <view>
-        <view class="title" wx:if="{{viewState === 'in_room'}}">房间 {{roomCode}}</view>
-        <view class="title" wx:else>房间 --</view>
-        <view class="subtle" style="margin-top: 10rpx;" wx:if="{{viewState === 'in_room'}}">角色：{{roleText}}</view>
-        <view class="subtle" style="margin-top: 10rpx;" wx:else>角色：未加入</view>
+  <view class="card room-frame-card room-info-card {{viewState !== 'in_room' ? 'room-frame-disabled' : ''}}">
+    <!-- 房间信息卡骨架：loading 时在卡片内部占位，避免内容切换闪烁 -->
+    <block wx:if="{{viewState === 'loading'}}">
+      <view class="room-info-skeleton" aria-label="房间信息加载中">
+        <view class="row-between">
+          <view class="room-info-skeleton-main">
+            <view class="room-skeleton-line room-info-skeleton-title"></view>
+            <view class="room-skeleton-line room-info-skeleton-role"></view>
+          </view>
+          <view class="room-skeleton-line room-info-skeleton-copy"></view>
+        </view>
+        <view class="row room-info-skeleton-actions">
+          <view class="room-skeleton-line room-info-skeleton-action"></view>
+          <view class="room-skeleton-line room-info-skeleton-action room-info-skeleton-action-gap"></view>
+        </view>
       </view>
-      <button class="btn-plain" size="mini" bindtap="copyRoomCode" disabled="{{viewState !== 'in_room' || loading}}">
-        复制
-      </button>
-    </view>
+    </block>
 
-    <view wx:if="{{viewState === 'in_room' && role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
-      <button wx:if="{{false}}" class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
-        入房码
-      </button>
-      <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
-        分享邀请
-      </button>
-      <button class="btn-danger action-btn action-btn-gap" bindtap="handleDissolve" disabled="{{loading}}">
-        解散房间
-      </button>
-    </view>
+    <block wx:else>
+      <view class="row-between">
+        <view>
+          <view class="title" wx:if="{{viewState === 'in_room'}}">房间 {{roomCode}}</view>
+          <view class="title" wx:else>房间 --</view>
+          <view class="subtle" style="margin-top: 10rpx;" wx:if="{{viewState === 'in_room'}}">角色：{{roleText}}</view>
+          <view class="subtle" style="margin-top: 10rpx;" wx:else>角色：未加入</view>
+        </view>
+        <button class="btn-plain" size="mini" bindtap="copyRoomCode" disabled="{{viewState !== 'in_room' || loading}}">
+          复制
+        </button>
+      </view>
 
-    <view wx:elif="{{viewState === 'in_room'}}" class="row action-row" style="margin-top: 18rpx;">
-      <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
-        分享邀请
-      </button>
-      <button class="btn-danger action-btn action-btn-gap" bindtap="handleLeave" disabled="{{loading}}">
-        退出房间
-      </button>
-    </view>
+      <view wx:if="{{viewState === 'in_room' && role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
+        <button wx:if="{{false}}" class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
+          入房码
+        </button>
+        <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+          分享邀请
+        </button>
+        <button class="btn-danger action-btn action-btn-gap" bindtap="handleDissolve" disabled="{{loading}}">
+          解散房间
+        </button>
+      </view>
 
-    <view wx:else class="row action-row" style="margin-top: 18rpx;">
-      <button class="btn-primary action-btn" disabled="{{true}}">分享邀请</button>
-      <button class="btn-danger action-btn action-btn-gap" disabled="{{true}}">房间操作</button>
-    </view>
+      <view wx:elif="{{viewState === 'in_room'}}" class="row action-row" style="margin-top: 18rpx;">
+        <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+          分享邀请
+        </button>
+        <button class="btn-danger action-btn action-btn-gap" bindtap="handleLeave" disabled="{{loading}}">
+          退出房间
+        </button>
+      </view>
+
+      <view wx:else class="row action-row" style="margin-top: 18rpx;">
+        <button class="btn-primary action-btn" disabled="{{true}}">分享邀请</button>
+        <button class="btn-danger action-btn action-btn-gap" disabled="{{true}}">房间操作</button>
+      </view>
+    </block>
   </view>
 
   <!-- 成员列表 -->

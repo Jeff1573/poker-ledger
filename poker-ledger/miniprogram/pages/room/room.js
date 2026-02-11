@@ -225,10 +225,20 @@ Page({
   async bootstrapRoomTab() {
     if (this._bootstrapping) return;
     this._bootstrapping = true;
-    this.setData({
-      loading: true,
-      viewState: "loading"
-    });
+    const hasRoomViewCache =
+      this.data.viewState === "in_room" &&
+      !!String(this.data.roomCode || "").trim();
+    // tabBar 切回 room 时优先保留已渲染内容，避免先回到 loading 造成视觉闪烁。
+    this.setData(
+      hasRoomViewCache
+        ? {
+            loading: true
+          }
+        : {
+            loading: true,
+            viewState: "loading"
+          }
+    );
 
     try {
       const app = getApp();

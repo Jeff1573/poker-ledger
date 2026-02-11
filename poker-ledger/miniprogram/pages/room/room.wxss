@@ -31,6 +31,87 @@ page {
   margin-top: 24rpx;
 }
 
+.room-info-card {
+  /* 房间信息卡固定最小高度，避免 loading 与内容切换时高度抖动 */
+  min-height: 224rpx;
+  box-sizing: border-box;
+}
+
+/* 房间信息卡 loading 骨架 */
+.room-info-skeleton {
+  min-height: 176rpx;
+}
+
+.room-info-skeleton-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.room-skeleton-line {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12rpx;
+  background: #E8E1D2;
+}
+
+.room-skeleton-line::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 120%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.56) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: room-info-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.room-info-skeleton-title {
+  width: 220rpx;
+  height: 38rpx;
+}
+
+.room-info-skeleton-role {
+  margin-top: 10rpx;
+  width: 150rpx;
+  height: 24rpx;
+}
+
+.room-info-skeleton-copy {
+  width: 86rpx;
+  height: 58rpx;
+  border-radius: 18rpx;
+  margin-left: 16rpx;
+}
+
+.room-info-skeleton-actions {
+  margin-top: 18rpx;
+}
+
+.room-info-skeleton-action {
+  flex: 1;
+  height: 76rpx;
+  border-radius: 18rpx;
+}
+
+.room-info-skeleton-action-gap {
+  margin-left: 14rpx;
+}
+
+@keyframes room-info-skeleton-shimmer {
+  0% {
+    left: -150%;
+  }
+
+  100% {
+    left: 160%;
+  }
+}
+
 .room-frame-card {
   transition: opacity 120ms ease;
 }
