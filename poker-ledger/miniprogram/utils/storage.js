@@ -25,6 +25,14 @@ function getLastRoomCode() {
   }
 }
 
+function clearLastRoomCode() {
+  try {
+    wx.removeStorageSync(KEY_LAST_ROOM_CODE);
+  } catch (err) {
+    // 忽略本地存储失败
+  }
+}
+
 function setToken(token) {
   try {
     wx.setStorageSync(KEY_TOKEN, token);
@@ -98,6 +106,7 @@ function consumePendingOwnerShareGuideRoom(roomCode) {
 module.exports = {
   setLastRoomCode,
   getLastRoomCode,
+  clearLastRoomCode,
   setToken,
   getToken,
   setOpenId,

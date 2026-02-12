@@ -421,6 +421,7 @@ Page({
       // 清除本地存储
       storage.setToken("");
       storage.setOpenId("");
+      storage.clearLastRoomCode();
 
       wx.hideLoading();
 
