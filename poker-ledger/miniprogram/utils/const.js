@@ -26,16 +26,16 @@ function resolveEnvVersion() {
 const ENDPOINTS_BY_ENV = {
   develop: {
     // 真机调试请改为你电脑在局域网中的可达地址，不要使用 127.0.0.1
-    API_BASE_URL: "http://127.0.0.1:3000",
-    WS_BASE_URL: "ws://127.0.0.1:3000"
+    API_BASE_URL: "https://jp.mdice.top",
+    WS_BASE_URL: "wss://jp.mdice.top"
   },
   trial: {
-    API_BASE_URL: "https://poker.mdice.top",
-    WS_BASE_URL: "wss://poker.mdice.top"
+    API_BASE_URL: "https://jp.mdice.top",
+    WS_BASE_URL: "wss://jp.mdice.top"
   },
   release: {
-    API_BASE_URL: "https://poker.mdice.top",
-    WS_BASE_URL: "wss://poker.mdice.top"
+    API_BASE_URL: "https://jp.mdice.top",
+    WS_BASE_URL: "wss://jp.mdice.top"
   }
 };
 
