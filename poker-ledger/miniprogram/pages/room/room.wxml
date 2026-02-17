@@ -130,12 +130,14 @@
       scroll-y
       enhanced="{{true}}"
       show-scrollbar="{{false}}"
+      scroll-into-view="{{txScrollIntoView}}"
       class="tx-list"
       lower-threshold="120"
       bindscrolltolower="handleTxListReachBottom"
       wx:else
     >
       <view class="tx-list-container">
+        <view id="tx-list-top-anchor"></view>
         <view wx:for="{{txRows}}" wx:key="id" class="tx-item row-between">
           <view class="tx-body">
             <view class="tx-main">

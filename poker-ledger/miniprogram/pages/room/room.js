@@ -123,6 +123,7 @@ Page({
     txLoadError: "",
     txCursorCreatedAt: 0,
     txCursorId: "",
+    txScrollIntoView: "",
 
     // 点击成员头像转账（弹窗）
     showTransferModal: false,
@@ -213,6 +214,7 @@ Page({
       txLoadError: "",
       txCursorCreatedAt: 0,
       txCursorId: "",
+      txScrollIntoView: "",
       showTransferModal: false,
       transferToOpenId: "",
       transferToName: "",
@@ -434,7 +436,10 @@ Page({
     // 交易：快照只保证“最新窗口”，与本地已加载历史做合并去重。
     const snapshotTxs = (snap.txs || []).map((t) => normalizeTxForView(t)).filter((t) => !!t);
     const prevTxs = this.data.txs || [];
+    const prevTopTxId = String((prevTxs[0] && prevTxs[0].id) || "").trim();
     const txs = mergeTxList(snapshotTxs, prevTxs);
+    const nextTopTxId = String((txs[0] && txs[0].id) || "").trim();
+    const shouldScrollToTop = !!nextTopTxId && nextTopTxId !== prevTopTxId;
 
     // 若本地已加载过更多历史，保持当前翻页游标，避免被快照回退到“最新 100”。
     const keepExistingPaging = prevTxs.length > snapshotTxs.length;
@@ -470,7 +475,11 @@ Page({
       () => {
         this.enrichMembersWithAmount();
         this.rebuildTotalsRows();
-        this.rebuildTxRows();
+        this.rebuildTxRows(() => {
+          if (shouldScrollToTop) {
+            this.scrollTxListToTop();
+          }
+        });
       }
     );
   },
@@ -655,7 +664,9 @@ Page({
       () => {
         this.enrichMembersWithAmount();
         this.rebuildTotalsRows();
-        this.rebuildTxRows();
+        this.rebuildTxRows(() => {
+          this.scrollTxListToTop();
+        });
       }
     );
   },
@@ -768,8 +779,10 @@ Page({
   /**
    * 生成全部交易列表
    * - 显示：转账者 → 接收者，金额
+   *
+   * @param {Function=} onDone
    */
-  rebuildTxRows() {
+  rebuildTxRows(onDone) {
     const txs = this.data.txs || [];
 
     const rows = [];
@@ -790,7 +803,19 @@ Page({
       });
     }
 
-    this.setData({ txRows: rows });
+    this.setData({ txRows: rows }, () => {
+      if (typeof onDone === "function") onDone();
+    });
+  },
+
+  /**
+   * 将交易列表滚动到顶部锚点。
+   * 先清空再设置，确保同一锚点可被重复触发。
+   */
+  scrollTxListToTop() {
+    this.setData({ txScrollIntoView: "" }, () => {
+      this.setData({ txScrollIntoView: "tx-list-top-anchor" });
+    });
   },
 
   /**
