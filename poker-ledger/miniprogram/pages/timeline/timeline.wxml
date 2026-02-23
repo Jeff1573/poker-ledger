@@ -1,0 +1,67 @@
+<view class="timeline-page">
+  <view class="container timeline-container">
+    <view class="card">
+      <view class="row-between">
+        <view class="title">牌局时间线</view>
+        <picker mode="selector" range="{{scopeOptions}}" value="{{scheduleScopeIndex}}" bindchange="handleScopeChange">
+          <view class="scope-picker">{{currentScopeLabel}} ▾</view>
+        </picker>
+      </view>
+      <view class="subtle" style="margin-top: 10rpx;">按时间查看每局全员输赢</view>
+    </view>
+
+    <view class="card timeline-card">
+      <view wx:if="{{timelineLoading}}" class="subtle">加载中...</view>
+
+      <view wx:elif="{{timelineError}}">
+        <view class="subtle">{{timelineError}}</view>
+        <button class="btn-plain" style="margin-top: 14rpx;" bindtap="loadTimelineFirstPage">重试</button>
+      </view>
+
+      <view wx:elif="{{timelineRows.length === 0}}" class="subtle">暂无时间线记录</view>
+
+      <scroll-view
+        wx:else
+        class="timeline-scroll"
+        scroll-y
+        enhanced="{{true}}"
+        show-scrollbar="{{false}}"
+        lower-threshold="120"
+        bindscrolltolower="handleTimelineReachBottom"
+      >
+        <view class="timeline-scroll-inner">
+          <view class="timeline-list">
+            <view wx:for="{{timelineGroups}}" wx:key="year" class="timeline-year-group">
+              <view class="timeline-year-header">
+                <view class="timeline-year-dot"></view>
+                <view class="timeline-year-text">{{item.year}}</view>
+              </view>
+
+              <view class="timeline-year-body">
+                <view wx:for="{{item.rows}}" wx:for-item="row" wx:key="settlementId" class="timeline-item">
+                  <view class="timeline-rail">
+                    <view class="timeline-node"></view>
+                  </view>
+
+                  <view class="timeline-content">
+                    <view class="row-between timeline-head">
+                      <view class="timeline-main">{{row.dissolvedAtText}} 房:{{row.roomCode}}</view>
+                      <view class="timeline-status {{row.statusClass}}">{{row.statusText}}</view>
+                    </view>
+
+                    <view class="subtle timeline-meta">交易 {{row.txCount}} 笔 · {{row.memberCount}} 人</view>
+                    <view class="timeline-members-text">{{row.membersDigestText}}</view>
+                  </view>
+                </view>
+              </view>
+            </view>
+          </view>
+
+          <view wx:if="{{timelineLoadingMore}}" class="timeline-footer subtle">加载中...</view>
+          <view wx:elif="{{!timelineHasMore}}" class="timeline-footer subtle">没有更多记录了</view>
+          <view class="timeline-bottom-spacer"></view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,180 @@
+page {
+  overflow: hidden;
+}
+
+.timeline-page {
+  height: calc(100vh - 48rpx - constant(safe-area-inset-bottom));
+  height: calc(100vh - 48rpx - env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.timeline-container {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scope-picker {
+  min-width: 164rpx;
+  padding: 10rpx 16rpx;
+  border-radius: 16rpx;
+  border: 2rpx solid rgba(35, 111, 93, 0.22);
+  color: #236F5D;
+  font-size: 24rpx;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.timeline-scroll {
+  margin-top: 18rpx;
+  flex: 1;
+  min-height: 0;
+}
+
+.timeline-scroll-inner {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-list {
+  flex-shrink: 0;
+}
+
+.timeline-year-group {
+  margin-bottom: 10rpx;
+}
+
+.timeline-year-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 30rpx;
+}
+
+.timeline-year-dot {
+  width: 18rpx;
+  height: 18rpx;
+  border-radius: 9rpx;
+  background: #C7CCC9;
+}
+
+.timeline-year-text {
+  margin-left: 14rpx;
+  font-size: 44rpx;
+  line-height: 1;
+  font-weight: 700;
+  color: #687974;
+}
+
+.timeline-year-body {
+  margin-left: 8rpx;
+  border-left: 2rpx solid rgba(60, 60, 67, 0.2);
+}
+
+.timeline-item {
+  position: relative;
+  padding: 0 0 22rpx 28rpx;
+}
+
+.timeline-item:last-child {
+  padding-bottom: 6rpx;
+}
+
+.timeline-rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 28rpx;
+}
+
+.timeline-node {
+  position: absolute;
+  left: -9rpx;
+  top: 22rpx;
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 7rpx;
+  background: #F38B2A;
+  box-shadow: 0 0 0 6rpx rgba(243, 139, 42, 0.14);
+}
+
+.timeline-content {
+  background: rgba(255, 255, 255, 0.72);
+  border: 2rpx solid rgba(35, 111, 93, 0.14);
+  border-radius: 20rpx;
+  padding: 16rpx 18rpx;
+}
+
+.timeline-head {
+  align-items: flex-start;
+}
+
+.timeline-main {
+  font-size: 38rpx;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #1E2F2A;
+  padding-right: 18rpx;
+}
+
+.timeline-status {
+  flex-shrink: 0;
+  min-width: 96rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  text-align: center;
+}
+
+.status-win {
+  background: #F38B2A;
+  color: #FFFFFF;
+}
+
+.status-loss {
+  background: #2E8B73;
+  color: #FFFFFF;
+}
+
+.status-draw {
+  background: #A0A5A2;
+  color: #FFFFFF;
+}
+
+.status-not_joined {
+  border: 2rpx solid #B2B8B5;
+  color: #707C78;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.timeline-meta {
+  margin-top: 10rpx;
+}
+
+.timeline-members-text {
+  margin-top: 10rpx;
+  font-size: 28rpx;
+  line-height: 1.4;
+  color: #687974;
+}
+
+.timeline-footer {
+  margin-top: 12rpx;
+  text-align: center;
+}
+
+.timeline-bottom-spacer {
+  height: calc(24rpx + constant(safe-area-inset-bottom));
+  height: calc(24rpx + env(safe-area-inset-bottom));
+  flex-shrink: 0;
+}

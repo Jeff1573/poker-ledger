@@ -2,6 +2,7 @@
   "pages": [
     "pages/home/home",
     "pages/leaderboard/leaderboard",
+    "pages/timeline/timeline",
     "pages/room/room",
     "pages/profile/profile",
     "pages/settlement/settlement"
@@ -40,4 +41,3 @@
     ]
   }
 }
-

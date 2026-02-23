@@ -257,12 +257,12 @@ Page({
     }
   },
 
-  goProfile() {
-    wx.switchTab({ url: "/pages/profile/profile" });
-  },
-
   goLeaderboard() {
     wx.navigateTo({ url: "/pages/leaderboard/leaderboard" });
+  },
+
+  goTimeline() {
+    wx.navigateTo({ url: "/pages/timeline/timeline" });
   },
 
   /**

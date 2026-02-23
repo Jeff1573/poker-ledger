@@ -12,8 +12,8 @@
       </view>
 
       <view class="hero-actions">
-        <button class="btn-plain hero-action-btn" size="mini" bindtap="goProfile">资料</button>
-        <button class="btn-plain hero-action-btn" size="mini" bindtap="goLeaderboard">总榜</button>
+        <button class="btn-plain hero-action-btn" size="mini" bindtap="goLeaderboard">总排行榜</button>
+        <button class="btn-plain hero-action-btn" size="mini" bindtap="goTimeline">历史记录</button>
       </view>
     </view>
 
