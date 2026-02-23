@@ -463,6 +463,7 @@ app.post("/api/auth/deactivate", authMiddleware, async (req, res) => {
     });
     return fail(res, result.code, result.message);
   }
+  wsHub.disconnectOpenId(openId, "UNAUTHORIZED", "账号已注销");
   routeLog(req, "info", "auth.deactivate.ok", "注销成功", {});
   return ok(res, { message: "注销成功" });
 });
@@ -741,6 +742,7 @@ app.post("/api/rooms/leave", authMiddleware, async (req, res) => {
     });
     return fail(res, result.code, result.message);
   }
+  wsHub.disconnectOpenId(openId, "FORBIDDEN", "你已退出房间");
   wsHub.broadcastSnapshot(result.roomCode);
   routeLog(req, "info", "room.leave.ok", "退出房间成功", {
     roomCode: result.roomCode
@@ -823,6 +825,7 @@ app.post("/api/rooms/dissolve", authMiddleware, async (req, res) => {
     });
     return fail(res, result.code, result.message);
   }
+  wsHub.disconnectOpenId(openId, "FORBIDDEN", "房间已解散");
   wsHub.broadcastDissolved(result.roomCode, result.settlementId);
   routeLog(req, "info", "room.dissolve.ok", "解散房间成功", {
     roomCode: result.roomCode,

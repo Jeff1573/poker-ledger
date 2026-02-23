@@ -31,6 +31,11 @@ page {
   margin-top: 24rpx;
 }
 
+.room-refresh-tip {
+  margin-top: 8rpx;
+  color: #4D6D63;
+}
+
 .room-info-card {
   /* 房间信息卡固定最小高度，避免 loading 与内容切换时高度抖动 */
   min-height: 224rpx;

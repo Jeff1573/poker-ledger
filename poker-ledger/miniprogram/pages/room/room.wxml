@@ -48,29 +48,32 @@
           <view class="title" wx:else>房间 --</view>
           <view class="subtle" style="margin-top: 10rpx;" wx:if="{{viewState === 'in_room'}}">角色：{{roleText}}</view>
           <view class="subtle" style="margin-top: 10rpx;" wx:else>角色：未加入</view>
+          <view class="subtle room-refresh-tip" wx:if="{{viewState === 'in_room' && isRefreshing}}">
+            后台同步中...
+          </view>
         </view>
-        <button class="btn-plain" size="mini" bindtap="copyRoomCode" disabled="{{viewState !== 'in_room' || loading}}">
+        <button class="btn-plain" size="mini" bindtap="copyRoomCode" disabled="{{viewState !== 'in_room'}}">
           复制
         </button>
       </view>
 
       <view wx:if="{{viewState === 'in_room' && role === 'owner'}}" class="row action-row" style="margin-top: 18rpx;">
-        <button wx:if="{{false}}" class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{loading}}">
+        <button wx:if="{{false}}" class="btn-plain action-btn" bindtap="handleShowJoinCode" disabled="{{isJoinCodeLoading}}">
           入房码
         </button>
-        <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+        <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{isJoinCodeLoading}}">
           分享邀请
         </button>
-        <button class="btn-danger action-btn action-btn-gap" bindtap="handleDissolve" disabled="{{loading}}">
+        <button class="btn-danger action-btn action-btn-gap" bindtap="handleDissolve" disabled="{{isDissolving}}">
           解散房间
         </button>
       </view>
 
       <view wx:elif="{{viewState === 'in_room'}}" class="row action-row" style="margin-top: 18rpx;">
-        <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{loading}}">
+        <button class="btn-primary action-btn" bindtap="handleShareByMenuTip" disabled="{{isJoinCodeLoading}}">
           分享邀请
         </button>
-        <button class="btn-danger action-btn action-btn-gap" bindtap="handleLeave" disabled="{{loading}}">
+        <button class="btn-danger action-btn action-btn-gap" bindtap="handleLeave" disabled="{{isLeaving}}">
           退出房间
         </button>
       </view>
@@ -220,12 +223,12 @@
     />
 
     <view class="row-between" style="margin-top: 18rpx;">
-      <button class="btn-plain" style="flex: 1;" bindtap="closeTransferModal" disabled="{{loading}}">取消</button>
+      <button class="btn-plain" style="flex: 1;" bindtap="closeTransferModal" disabled="{{isTransferSubmitting}}">取消</button>
       <button
         class="btn-primary"
         style="flex: 1; margin-left: 14rpx;"
         bindtap="confirmTransfer"
-        disabled="{{loading || !transferCanSubmit}}"
+        disabled="{{isTransferSubmitting || !transferCanSubmit}}"
       >
         确认
       </button>

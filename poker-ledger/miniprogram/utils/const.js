@@ -26,12 +26,12 @@ function resolveEnvVersion() {
 const ENDPOINTS_BY_ENV = {
   develop: {
     // 真机调试请改为你电脑在局域网中的可达地址，不要使用 127.0.0.1
-    API_BASE_URL: "https://jp.mdice.top",
-    WS_BASE_URL: "wss://jp.mdice.top"
+    API_BASE_URL: "https://dev.mdice.top",
+    WS_BASE_URL: "wss://dev.mdice.top"
   },
   trial: {
-    API_BASE_URL: "https://jp.mdice.top",
-    WS_BASE_URL: "wss://jp.mdice.top"
+    API_BASE_URL: "https://dev.mdice.top",
+    WS_BASE_URL: "wss://dev.mdice.top"
   },
   release: {
     API_BASE_URL: "https://jp.mdice.top",

@@ -8,6 +8,7 @@
       <view>
         <view class="hero-title">打牌记账</view>
         <view class="hero-subtle">创建房间快速记账，输入房间号或扫码加入</view>
+        <view wx:if="{{miniVersionText}}" class="hero-version">{{miniVersionText}}</view>
       </view>
 
       <view class="hero-actions">

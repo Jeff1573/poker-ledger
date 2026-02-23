@@ -38,6 +38,13 @@ page {
   line-height: 1.45;
 }
 
+.hero-version {
+  margin-top: 8rpx;
+  color: rgba(249, 245, 236, 0.72);
+  font-size: 22rpx;
+  line-height: 1.4;
+}
+
 .hero-actions {
   display: flex;
   flex-direction: column;

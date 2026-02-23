@@ -94,6 +94,100 @@ function mergeTxList(primary, secondary) {
 }
 
 /**
+ * 生成快照元信息，用于“新旧快照”快速比较，减少重复刷新。
+ *
+ * @param {{room?:any, members?:any[], txs?:any[]}} snap
+ */
+function buildSnapshotMeta(snap) {
+  const room = (snap && snap.room) || {};
+  const members = Array.isArray(snap && snap.members) ? snap.members : [];
+  const txs = Array.isArray(snap && snap.txs) ? snap.txs : [];
+  const topTx = txs[0] || null;
+
+  let memberMaxUpdatedAt = 0;
+  for (const m of members) {
+    const updatedAt = Number((m && m.updatedAt) || 0);
+    if (updatedAt > memberMaxUpdatedAt) memberMaxUpdatedAt = updatedAt;
+  }
+
+  return {
+    roomCode: String(room.roomCode || "").trim().toUpperCase(),
+    roomUpdatedAt: Number(room.updatedAt || 0),
+    roomLastTxAt: Number(room.lastTxAt || 0),
+    memberMaxUpdatedAt,
+    topTxCreatedAt: Number((topTx && topTx.createdAt) || 0),
+    topTxId: String((topTx && topTx.id) || ""),
+    memberCount: members.length,
+    txCount: txs.length
+  };
+}
+
+/**
+ * 比较快照元信息的新旧关系。
+ * 返回值：
+ * - >0：next 更新
+ * - 0：两者同级
+ * - <0：next 更旧
+ *
+ * @param {any} next
+ * @param {any} prev
+ * @returns {number}
+ */
+function compareSnapshotMeta(next, prev) {
+  if (!next && !prev) return 0;
+  if (!next) return -1;
+  if (!prev) return 1;
+
+  const numberKeys = [
+    "roomLastTxAt",
+    "roomUpdatedAt",
+    "memberMaxUpdatedAt",
+    "topTxCreatedAt",
+    "memberCount",
+    "txCount"
+  ];
+  for (const key of numberKeys) {
+    const diff = Number(next[key] || 0) - Number(prev[key] || 0);
+    if (diff !== 0) return diff;
+  }
+
+  return String(next.topTxId || "").localeCompare(String(prev.topTxId || ""));
+}
+
+/**
+ * 生成快照指纹，解决“元信息相同但内容变化”的判定问题。
+ *
+ * @param {{room?:any, members?:any[], txs?:any[], txHasMore?:boolean, txNextBeforeCreatedAt?:number, txNextBeforeId?:string}} snap
+ * @returns {string}
+ */
+function buildSnapshotFingerprint(snap) {
+  const room = (snap && snap.room) || {};
+  const members = Array.isArray(snap && snap.members) ? snap.members : [];
+  const txs = Array.isArray(snap && snap.txs) ? snap.txs : [];
+
+  const membersDigest = members
+    .map((m) => {
+      const openId = String((m && m.openId) || "");
+      const updatedAt = Number((m && m.updatedAt) || 0);
+      const active = m && m.active ? 1 : 0;
+      return `${openId}:${updatedAt}:${active}`;
+    })
+    .join(",");
+  const txDigest = txs.map((t) => String((t && t.id) || "")).join(",");
+
+  return [
+    String(room.roomCode || "").trim().toUpperCase(),
+    Number(room.updatedAt || 0),
+    Number(room.lastTxAt || 0),
+    membersDigest,
+    txDigest,
+    snap && snap.txHasMore ? 1 : 0,
+    Number((snap && snap.txNextBeforeCreatedAt) || 0),
+    String((snap && snap.txNextBeforeId) || "")
+  ].join("|");
+}
+
+/**
  * 房间页职责：
  * - 使用 WebSocket 实时同步房间快照（room/members/txs）
  * - 展示成员横向滑动（房主固定第一个）
@@ -105,6 +199,11 @@ Page({
   data: {
     loading: false,
     viewState: "loading",
+    isRefreshing: false,
+    isTransferSubmitting: false,
+    isJoinCodeLoading: false,
+    isLeaving: false,
+    isDissolving: false,
 
     roomCode: "",
     showShareGuide: false,
@@ -140,6 +239,11 @@ Page({
   },
 
   onLoad() {
+    this._allowSocketReconnect = false;
+    this._socketConnecting = false;
+    this._joinCodeLoading = false;
+    this._lastIncomingSnapshotMeta = null;
+    this._lastIncomingSnapshotFingerprint = "";
     this.setData({ viewState: "loading" });
   },
 
@@ -159,12 +263,10 @@ Page({
 
   onHide() {
     this._pageActive = false;
-    this.closeSocket();
   },
 
   onUnload() {
     this._pageActive = false;
-    this.closeSocket();
   },
 
   noop() {},
@@ -195,9 +297,19 @@ Page({
    */
   applyIdleState(viewState) {
     this._joinCodeReqVersion = Number(this._joinCodeReqVersion || 0) + 1;
+    this._joinCodeLoading = false;
+    this._allowSocketReconnect = false;
+    this._lastIncomingSnapshotMeta = null;
+    this._lastIncomingSnapshotFingerprint = "";
     this.closeSocket();
     this._roomGoneHandled = false;
     this.setData({
+      loading: false,
+      isRefreshing: false,
+      isTransferSubmitting: false,
+      isJoinCodeLoading: false,
+      isLeaving: false,
+      isDissolving: false,
       viewState,
       roomCode: "",
       showShareGuide: false,
@@ -244,7 +356,7 @@ Page({
   /**
    * room tab 启动入口：
    * 1) 先根据 /api/me 判定资料状态与在房状态
-   * 2) 仅在 inRoom 时进入实时同步链路（WS + snapshot）
+   * 2) 仅在 inRoom 时进入实时同步链路（WS 常连 + 主动 HTTP 刷新）
    */
   async bootstrapRoomTab() {
     if (this._bootstrapping) return;
@@ -252,14 +364,15 @@ Page({
     const hasRoomViewCache =
       this.data.viewState === "in_room" &&
       !!String(this.data.roomCode || "").trim();
-    // tabBar 切回 room 时优先保留已渲染内容，避免先回到 loading 造成视觉闪烁。
+    // tabBar 切回 room 时优先保留可交互内容，同时后台无感刷新。
     this.setData(
       hasRoomViewCache
         ? {
-            loading: true
+            isRefreshing: true
           }
         : {
             loading: true,
+            isRefreshing: true,
             viewState: "loading"
           }
     );
@@ -293,7 +406,10 @@ Page({
         viewState: "in_room",
         roomCode
       });
-      await this.enterRoom(roomCode);
+      await this.enterRoom({
+        roomCode,
+        role: String(me.role || "").trim().toLowerCase()
+      });
     } catch (err) {
       log.error("room.bootstrap.fail", "房间 tab 初始化失败", {
         errMsg: String((err && err.message) || err || "")
@@ -301,25 +417,37 @@ Page({
       this.toast("房间初始化失败，请稍后重试");
       this.applyNoRoomState();
     } finally {
-      this.setData({ loading: false });
+      this.setData({
+        loading: false,
+        isRefreshing: false
+      });
       this._bootstrapping = false;
     }
   },
 
   /**
-   * 进入房间前做一次访问控制：
-   * - 必须存在 /api/rooms/my 映射且 roomCode 匹配
-   * - 再建立 WebSocket 订阅，保证“回到房间自动同步”
+   * 进入房间并执行同步链路：
+   * - 保持/恢复 WebSocket 常连
+   * - 每次进入 room 页主动拉一次 HTTP 快照，保证数据是最新
    *
-   * @param {string} expectedRoomCode
+   * @param {{roomCode:string, role?:string}} input
    */
-  async enterRoom(expectedRoomCode) {
+  async enterRoom(input) {
     if (this._entering) return;
-    const roomCode = String(expectedRoomCode || this.data.roomCode || "").trim().toUpperCase();
+    const roomCode = String((input && input.roomCode) || this.data.roomCode || "").trim().toUpperCase();
     if (!roomCode) {
       this.applyNoRoomState();
       return;
     }
+    const currentRoomCode = String(this.data.roomCode || "").trim().toUpperCase();
+    if (currentRoomCode !== roomCode) {
+      // 切房时重置快照去重基线，避免把新房间首个快照误判为旧数据。
+      this._lastIncomingSnapshotMeta = null;
+      this._lastIncomingSnapshotFingerprint = "";
+    }
+    const normalizedRole = String((input && input.role) || this.data.role || "").trim().toLowerCase() === "owner"
+      ? "owner"
+      : "member";
 
     this._entering = true;
     log.info("room.enter.start", "开始进入房间", {
@@ -327,51 +455,29 @@ Page({
     });
 
     try {
-      const app = getApp();
-      const session = await app.ensureSession();
-      this.setData({ meOpenId: session.openId });
-      log.debug("room.enter.session_ready", "登录态准备完成", {
-        openIdMasked: log.maskOpenId(session.openId)
-      });
-
-      const myRoom = await app.apiCall({ path: "/api/rooms/my", method: "GET" });
-      if (!myRoom || !myRoom.ok) {
-        this.toast((myRoom && myRoom.message) || "进入房间失败");
-        this.applyNoRoomState();
-        return;
-      }
-      if (!myRoom.inRoom) {
-        this.applyNoRoomState();
-        return;
-      }
-      const myRoomCode = String(myRoom.roomCode || "").trim().toUpperCase();
-      if (!myRoomCode || myRoomCode !== roomCode) {
-        this.applyNoRoomState();
-        return;
-      }
-
-      const roleText = myRoom.role === "owner" ? "房主" : "成员";
+      const roleText = normalizedRole === "owner" ? "房主" : "成员";
       // 引导弹层只允许“创建后首次进入房间”展示一次，避免重进小程序重复弹出。
       const shouldShowShareGuide =
-        myRoom.role === "owner" &&
+        normalizedRole === "owner" &&
         !this.data.ownerGuideShown &&
-        storage.consumePendingOwnerShareGuideRoom(myRoomCode);
+        storage.consumePendingOwnerShareGuideRoom(roomCode);
 
+      this._allowSocketReconnect = true;
       this._roomGoneHandled = false;
       this.setData({
         viewState: "in_room",
-        roomCode: myRoomCode,
-        role: myRoom.role,
+        roomCode,
+        role: normalizedRole,
         roleText,
         showShareGuide: shouldShowShareGuide,
         ownerGuideShown: this.data.ownerGuideShown || shouldShowShareGuide
       });
 
-      // 1) 建立 WS 订阅（实时同步）
+      // 1) 确保 WS 连通（已连接则复用）
       await this.startSocket();
 
-      // 2) 兜底拉一次快照（防止 WS 因网络问题未及时收到）
-      await this.fetchSnapshot();
+      // 2) 每次回到 room 页都主动拉一次最新快照（业务要求）
+      await this.fetchSnapshot({ source: "http_on_show" });
       log.info("room.enter.success", "进入房间成功", {
         roomCodeMasked: log.maskRoomCode(this.data.roomCode)
       });
@@ -389,9 +495,12 @@ Page({
   },
 
   /**
-   * HTTP 拉取房间快照（兜底用）。
+   * HTTP 拉取房间快照并交给统一入口判重。
+   *
+   * @param {{source?: string}=} options
    */
-  async fetchSnapshot() {
+  async fetchSnapshot(options) {
+    const source = String((options && options.source) || "http");
     try {
       const app = getApp();
       const r = await app.apiCall({
@@ -399,26 +508,100 @@ Page({
         method: "GET"
       });
       if (r && r.ok) {
-        this.applySnapshot(r);
+        const applied = this.ingestSnapshot(r, source);
         log.debug("room.snapshot.ok", "房间快照同步完成", {
+          source,
+          applied,
           roomCodeMasked: log.maskRoomCode(this.data.roomCode),
           memberCount: Array.isArray(r.members) ? r.members.length : 0,
           txCount: Array.isArray(r.txs) ? r.txs.length : 0
         });
       } else {
+        const code = String((r && r.code) || "").trim().toUpperCase();
         log.warn("room.snapshot.biz_fail", "房间快照业务失败", {
+          source,
           roomCodeMasked: log.maskRoomCode(this.data.roomCode),
-          code: String((r && r.code) || ""),
+          code,
           message: String((r && r.message) || "")
         });
+        if (code === "FORBIDDEN" || code === "ROOM_NOT_FOUND" || code === "NOT_IN_ROOM") {
+          this.applyNoRoomState();
+        }
       }
     } catch (err) {
       // 兜底失败不影响 WS 正常工作
       log.warn("room.snapshot.fail", "房间快照请求失败", {
+        source,
         roomCodeMasked: log.maskRoomCode(this.data.roomCode),
         errMsg: String((err && err.message) || err || "")
       });
     }
+  },
+
+  /**
+   * 统一处理快照数据：
+   * - 丢弃旧快照（防止乱序包回滚 UI）
+   * - 丢弃重复快照（防止 WS + HTTP 双通道触发重复渲染）
+   *
+   * @param {{room:any, members:any[], txs:any[]}} snap
+   * @param {string} source
+   * @returns {boolean}
+   */
+  ingestSnapshot(snap, source) {
+    if (!snap || !snap.room) return false;
+    const incomingRoomCode = String((snap.room && snap.room.roomCode) || "").trim().toUpperCase();
+    const currentRoomCode = String(this.data.roomCode || "").trim().toUpperCase();
+    if (incomingRoomCode && currentRoomCode && incomingRoomCode !== currentRoomCode) {
+      log.debug("room.snapshot.skip.room_mismatch", "快照房间号不匹配，忽略", {
+        source,
+        incomingRoomCodeMasked: log.maskRoomCode(incomingRoomCode),
+        currentRoomCodeMasked: log.maskRoomCode(currentRoomCode)
+      });
+      return false;
+    }
+
+    const nextMeta = buildSnapshotMeta(snap);
+    const nextFingerprint = buildSnapshotFingerprint(snap);
+    let prevMeta = this._lastIncomingSnapshotMeta || null;
+    let prevFingerprint = String(this._lastIncomingSnapshotFingerprint || "");
+    const prevRoomCode = String((prevMeta && prevMeta.roomCode) || "").trim().toUpperCase();
+    const nextRoomCode = String(nextMeta.roomCode || "").trim().toUpperCase();
+    if (prevMeta && prevRoomCode && nextRoomCode && prevRoomCode !== nextRoomCode) {
+      // 兜底隔离：判重状态不跨房间复用，避免跨房间时间线回退导致误丢包。
+      prevMeta = null;
+      prevFingerprint = "";
+      this._lastIncomingSnapshotMeta = null;
+      this._lastIncomingSnapshotFingerprint = "";
+      log.debug("room.snapshot.dedup.reset.room_changed", "检测到房间变化，重置快照去重基线", {
+        source,
+        prevRoomCodeMasked: log.maskRoomCode(prevRoomCode),
+        nextRoomCodeMasked: log.maskRoomCode(nextRoomCode)
+      });
+    }
+    const compare = compareSnapshotMeta(nextMeta, prevMeta);
+
+    if (compare < 0) {
+      log.debug("room.snapshot.skip.older", "收到旧快照，已忽略", {
+        source,
+        roomCodeMasked: log.maskRoomCode(currentRoomCode || incomingRoomCode)
+      });
+      return false;
+    }
+    if (compare === 0 && nextFingerprint === prevFingerprint) {
+      log.debug("room.snapshot.skip.duplicate", "收到重复快照，已忽略", {
+        source,
+        roomCodeMasked: log.maskRoomCode(currentRoomCode || incomingRoomCode)
+      });
+      return false;
+    }
+
+    this._lastIncomingSnapshotMeta = nextMeta;
+    this._lastIncomingSnapshotFingerprint = nextFingerprint;
+    this.applySnapshot(snap);
+    if (this.data.isRefreshing) {
+      this.setData({ isRefreshing: false });
+    }
+    return true;
   },
 
   /**
@@ -488,11 +671,34 @@ Page({
    * 建立 WebSocket 连接并订阅房间。
    */
   async startSocket() {
-    this.closeSocket();
+    const roomCode = String(this.data.roomCode || "").trim().toUpperCase();
+    if (!roomCode) return;
+    if (this._socketOpen && this._socket) {
+      this.sendWs({ type: "subscribe", roomCode });
+      return;
+    }
+    if (this._socketConnecting) return;
+    this._socketConnecting = true;
 
-    const app = getApp();
-    const session = await app.ensureSession();
-    const token = session.token;
+    if (this._socket) {
+      try {
+        this._socket.close();
+      } catch (err) {
+        // ignore
+      }
+      this._socket = null;
+    }
+    this._socketOpen = false;
+
+    let token = "";
+    try {
+      const app = getApp();
+      const session = await app.ensureSession();
+      token = String(session.token || "");
+    } catch (err) {
+      this._socketConnecting = false;
+      throw err;
+    }
 
     const wsBase = String(CONST.WS_BASE_URL || "").replace(/\/$/, "");
     const url = `${wsBase}/ws?token=${encodeURIComponent(token)}`;
@@ -503,11 +709,18 @@ Page({
       tokenMasked: log.maskToken(token),
       wsUrlMasked
     });
-    const task = wx.connectSocket({ url });
+    let task;
+    try {
+      task = wx.connectSocket({ url });
+    } catch (err) {
+      this._socketConnecting = false;
+      throw err;
+    }
     this._socket = task;
     this._socketOpen = false;
 
     task.onOpen(() => {
+      this._socketConnecting = false;
       this._socketOpen = true;
       this._reconnectAttempt = 0;
       log.info("ws.connect.open", "WebSocket 已连接", {
@@ -521,13 +734,15 @@ Page({
     });
 
     task.onClose((event) => {
+      this._socketConnecting = false;
       this._socketOpen = false;
+      if (this._socket === task) this._socket = null;
       log.warn("ws.connect.close", "WebSocket 已关闭", {
         roomCodeMasked: log.maskRoomCode(this.data.roomCode),
         code: Number((event && event.code) || 0),
         reason: String((event && event.reason) || "")
       });
-      if (this._pageActive) this.scheduleReconnect();
+      if (this._allowSocketReconnect) this.scheduleReconnect();
     });
 
     task.onError((err) => {
@@ -544,6 +759,7 @@ Page({
    * 关闭 WebSocket 与重连定时器。
    */
   closeSocket() {
+    this._allowSocketReconnect = false;
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
@@ -557,6 +773,7 @@ Page({
       }
       this._socket = null;
     }
+    this._socketConnecting = false;
     this._socketOpen = false;
   },
 
@@ -613,7 +830,7 @@ Page({
     }
 
     if (data.type === "room_snapshot") {
-      this.applySnapshot(data);
+      this.ingestSnapshot(data, "ws");
       return;
     }
 
@@ -675,6 +892,7 @@ Page({
    * 简单指数退避重连：1s, 2s, 4s... 上限 10s
    */
   scheduleReconnect() {
+    if (!this._allowSocketReconnect) return;
     if (this._reconnectTimer) return;
     const attempt = Number(this._reconnectAttempt || 0);
     const delay = Math.min(10000, 1000 * Math.pow(2, attempt));
@@ -687,7 +905,7 @@ Page({
 
     this._reconnectTimer = setTimeout(async () => {
       this._reconnectTimer = null;
-      if (!this._pageActive) return;
+      if (!this._allowSocketReconnect) return;
       log.info("ws.reconnect.try", "开始执行 WebSocket 重连", {
         roomCodeMasked: log.maskRoomCode(this.data.roomCode),
         attempt: this._reconnectAttempt
@@ -696,10 +914,10 @@ Page({
       // 若期间用户已退出房间，则不再重连
       try {
         const app = getApp();
-        const myRoom = await app.apiCall({ path: "/api/rooms/my", method: "GET" });
+        const me = await app.loadMe();
         const roomCode = String(this.data.roomCode || "").trim().toUpperCase();
-        const myRoomCode = String((myRoom && myRoom.roomCode) || "").trim().toUpperCase();
-        if (!myRoom || !myRoom.ok || !myRoom.inRoom || myRoomCode !== roomCode) {
+        const myRoomCode = String((me && me.roomCode) || "").trim().toUpperCase();
+        if (!me || !me.ok || !me.inRoom || myRoomCode !== roomCode) {
           this.applyNoRoomState();
           return;
         }
@@ -921,7 +1139,6 @@ Page({
    */
   handleTapMember(e) {
     if (this.data.viewState !== "in_room") return;
-    if (this.data.loading) return;
 
     const openId = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.openid) || "").trim();
     if (!openId) return;
@@ -969,7 +1186,15 @@ Page({
     this.setData({ transferCanSubmit: ok });
   },
 
-  closeTransferModal() {
+  /**
+   * 关闭转账弹层。
+   * 默认在提交中不允许用户手动关闭；仅内部流程可强制关闭。
+   *
+   * @param {{force?: boolean}=} options
+   */
+  closeTransferModal(options) {
+    const force = !!(options && options.force);
+    if (this.data.isTransferSubmitting && !force) return;
     this.setData({
       showTransferModal: false,
       transferToOpenId: "",
@@ -986,7 +1211,7 @@ Page({
   async confirmTransfer() {
     if (this.data.viewState !== "in_room") return;
     if (!this.data.transferCanSubmit) return;
-    if (this._transferSubmitting) return;
+    if (this.data.isTransferSubmitting) return;
 
     const toOpenId = String(this.data.transferToOpenId || "").trim();
     const amount = Number(this.data.transferAmountText);
@@ -1005,8 +1230,8 @@ Page({
       return;
     }
 
-    // 转账提交使用页面私有状态，避免触发 loading 相关按钮禁用样式（发灰）。
-    this._transferSubmitting = true;
+    // 转账提交仅禁用弹层按钮，不影响房间页其它交互。
+    this.setData({ isTransferSubmitting: true });
     try {
       const app = getApp();
       const r = await app.apiCall({
@@ -1024,13 +1249,13 @@ Page({
         return;
       }
 
-      this.closeTransferModal();
+      this.closeTransferModal({ force: true });
       // 优先依赖 WS 的 tx_added 增量推送，避免每次转账后整页快照刷新。
       // 仅在 WS 未连接时兜底拉取一次快照，保证最终一致性。
       let usedSnapshotFallback = false;
       if (!this._socketOpen) {
         usedSnapshotFallback = true;
-        await this.fetchSnapshot();
+        await this.fetchSnapshot({ source: "http_tx_fallback" });
       }
 
       log.info("tx.submit.success", "转账提交成功", {
@@ -1049,17 +1274,18 @@ Page({
       });
       this.toast("转账失败，请稍后重试");
     } finally {
-      this._transferSubmitting = false;
+      this.setData({ isTransferSubmitting: false });
     }
   },
 
   copyRoomCode() {
+    if (this.data.viewState !== "in_room") return;
     wx.setClipboardData({ data: this.data.roomCode });
   },
 
   async handleShowJoinCode() {
     if (this.data.viewState !== "in_room") return;
-    if (this.data.loading) return;
+    if (this.data.isJoinCodeLoading) return;
     if (this._joinCodeLoading) return;
 
     this._joinCodeLoading = true;
@@ -1067,7 +1293,12 @@ Page({
     this._joinCodeReqVersion = reqVersion;
     const envVersion = getCurrentMiniEnvVersion();
     const app = getApp();
-    this.setData({ showJoinCode: true, joinCodeUrl: "", joinCodeLoadError: false });
+    this.setData({
+      isJoinCodeLoading: true,
+      showJoinCode: true,
+      joinCodeUrl: "",
+      joinCodeLoadError: false
+    });
 
     try {
       const path =
@@ -1112,6 +1343,7 @@ Page({
       });
     } finally {
       this._joinCodeLoading = false;
+      this.setData({ isJoinCodeLoading: false });
     }
   },
 
@@ -1149,6 +1381,7 @@ Page({
    */
   handleShareByMenuTip() {
     if (this.data.viewState !== "in_room") return;
+    if (this.data.isJoinCodeLoading) return;
     if (this.data.showShareGuide) this.closeShareGuide();
     this.handleShowJoinCode();
   },
@@ -1156,7 +1389,7 @@ Page({
   async handleLeave() {
     if (this.data.viewState !== "in_room") return;
     if (this.data.role === "owner") return;
-    if (this.data.loading) return;
+    if (this.data.isLeaving) return;
 
     const confirm = await new Promise((resolve) => {
       wx.showModal({
@@ -1170,7 +1403,7 @@ Page({
     });
     if (!confirm) return;
 
-    this.setData({ loading: true });
+    this.setData({ isLeaving: true });
     try {
       const app = getApp();
       const r = await app.apiCall({ path: "/api/rooms/leave", method: "POST", data: {} });
@@ -1185,14 +1418,14 @@ Page({
       console.error("room_leave 失败", err);
       this.toast("退出失败，请稍后重试");
     } finally {
-      this.setData({ loading: false });
+      this.setData({ isLeaving: false });
     }
   },
 
   async handleDissolve() {
     if (this.data.viewState !== "in_room") return;
     if (this.data.role !== "owner") return;
-    if (this.data.loading) return;
+    if (this.data.isDissolving) return;
 
     const confirm = await new Promise((resolve) => {
       wx.showModal({
@@ -1206,7 +1439,7 @@ Page({
     });
     if (!confirm) return;
 
-    this.setData({ loading: true });
+    this.setData({ isDissolving: true });
     try {
       const app = getApp();
       const r = await app.apiCall({ path: "/api/rooms/dissolve", method: "POST", data: {} });
@@ -1222,7 +1455,7 @@ Page({
       console.error("room_dissolve 失败", err);
       this.toast("解散失败，请稍后重试");
     } finally {
-      this.setData({ loading: false });
+      this.setData({ isDissolving: false });
     }
   },
 

@@ -2,6 +2,7 @@ const { validateRoomCode } = require("../../utils/validator");
 const CONST = require("../../utils/const");
 const storage = require("../../utils/storage");
 const { resolveApiAssetUrl } = require("../../utils/url");
+const VALID_MINI_ENV_VERSIONS = new Set(["develop", "trial", "release"]);
 
 /**
  * 安全解码：避免非法编码导致 decodeURIComponent 抛错。
@@ -68,6 +69,32 @@ function extractInviteRoomCodeFromOptions(options) {
 }
 
 /**
+ * 读取“小程序版本管理”中的版本号。
+ * 展示策略：
+ * - version 有值：展示具体版本号（如 v1.2.3）
+ * - version 为空：回退到环境文案（开发版/体验版/正式版）
+ * - 异常：展示未知
+ *
+ * @returns {string}
+ */
+function resolveMiniProgramVersionText() {
+  try {
+    const info = typeof wx.getAccountInfoSync === "function" ? wx.getAccountInfoSync() : null;
+    const miniProgram = (info && info.miniProgram) || {};
+    const version = String(miniProgram.version || "").trim();
+    if (version) return `小程序版本 v${version}`;
+
+    const envVersion = String(miniProgram.envVersion || "").trim().toLowerCase();
+    if (!VALID_MINI_ENV_VERSIONS.has(envVersion)) return "小程序版本 未知";
+    if (envVersion === "develop") return "小程序版本 开发版";
+    if (envVersion === "trial") return "小程序版本 体验版";
+    return "小程序版本 正式版";
+  } catch (err) {
+    return "小程序版本 未知";
+  }
+}
+
+/**
  * 首页职责：
  * 1) 获取用户授权信息（头像/昵称）
  * 2) 创建房间（房主）/ 加入房间（成员）/ 扫码加入
@@ -85,6 +112,7 @@ Page({
     userAvatarUrl: "",
     roomCodeInput: "",
     pendingRoomCode: "",
+    miniVersionText: "",
 
     // 推荐授权方案：chooseAvatar + input(type="nickname")
     supportChooseAvatar: false,
@@ -115,7 +143,8 @@ Page({
     this.setData({
       roomCodeInput: pendingRoomCode || last || "",
       pendingRoomCode,
-      supportChooseAvatar
+      supportChooseAvatar,
+      miniVersionText: resolveMiniProgramVersionText()
     });
 
     if (pendingRoomCode) {
