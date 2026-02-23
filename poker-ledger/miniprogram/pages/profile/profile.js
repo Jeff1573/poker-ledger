@@ -2,13 +2,18 @@
  * 个人资料页：
  * - 展示微信头像/昵称
  * - 允许仅修改 displayName（展示昵称）
- * - 展示“我参与过的历史记录”，并支持弹窗查看详情
+ * - 展示时间线历史（支持 mine/all 筛选）
  */
 const { formatTime } = require("../../utils/format");
 const { resolveApiAssetUrl } = require("../../utils/url");
 const CONST = require("../../utils/const");
 
 const HISTORY_PAGE_LIMIT = 20;
+const TIMELINE_PREVIEW_MEMBER_LIMIT = 3;
+const TIMELINE_SCOPE_OPTIONS = [
+  { label: "与我相关", value: "mine" },
+  { label: "全部", value: "all" }
+];
 
 /**
  * 将整数输赢值格式化为文本（正数带 +）。
@@ -19,6 +24,46 @@ const HISTORY_PAGE_LIMIT = 20;
 function formatAmountText(amount) {
   const n = Number(amount || 0);
   return n > 0 ? `+${n}` : String(n);
+}
+
+/**
+ * 根据选择器下标解析时间线 scope。
+ *
+ * @param {number} index
+ * @returns {"mine"|"all"}
+ */
+function resolveTimelineScopeByIndex(index) {
+  const idx = Number(index || 0);
+  const opt = TIMELINE_SCOPE_OPTIONS[idx];
+  return opt && opt.value === "all" ? "all" : "mine";
+}
+
+/**
+ * 按状态构造右侧主指标文案。
+ *
+ * @param {string} status
+ * @param {number|null} amount
+ * @returns {string}
+ */
+function buildTimelineStatusText(status, amount) {
+  const n = Number(amount || 0);
+  if (status === "win") return `赢 ${Math.abs(n)}`;
+  if (status === "loss") return `输 ${Math.abs(n)}`;
+  if (status === "draw") return "平 0";
+  return "未参与";
+}
+
+/**
+ * 统一输赢颜色 class。
+ *
+ * @param {number} amount
+ * @returns {"plus"|"minus"|"zero"}
+ */
+function resolveAmountClass(amount) {
+  const n = Number(amount || 0);
+  if (n > 0) return "plus";
+  if (n < 0) return "minus";
+  return "zero";
 }
 
 Page({
@@ -37,31 +82,32 @@ Page({
     draftDisplayName: "",
     canSaveProfile: false,
 
-    historyLoading: false,
-    historyError: "",
-    historyRows: [],
-    historyHasMore: false,
-    historyLoadingMore: false,
-    historyNextBeforeDissolvedAt: null,
-    historyNextBeforeRoomCode: "",
+    scheduleScopeIndex: 0,
+    scopeOptions: TIMELINE_SCOPE_OPTIONS.map((x) => x.label),
+    currentScopeLabel: TIMELINE_SCOPE_OPTIONS[0].label,
 
-    showHistoryDetail: false,
-    historyDetailLoading: false,
-    historyDetailTitle: "",
-    historyDetailTxCount: 0,
-    historyDetailDissolvedAtText: "",
-    historyDetailRows: []
+    timelineLoading: false,
+    timelineError: "",
+    timelineRows: [],
+    timelineGroups: [],
+    timelineHasMore: false,
+    timelineLoadingMore: false,
+    timelineNextBeforeDissolvedAt: null,
+    timelineNextBeforeRoomCode: "",
+    expandedSettleIds: {}
   },
 
   onLoad() {
     const supportChooseAvatar =
       !!wx.canIUse && wx.canIUse("button.open-type.chooseAvatar") && wx.canIUse("input.type.nickname");
+    // 时间线请求序号：每次首屏刷新递增，用于丢弃过期回包。
+    this._timelineReqSeq = 0;
     this.setData({ supportChooseAvatar });
   },
 
   onShow() {
     this.loadProfile();
-    this.loadHistoryFirstPage();
+    this.loadTimelineFirstPage();
   },
 
   async loadProfile() {
@@ -279,216 +325,260 @@ Page({
   },
 
   /**
-   * 将后端历史行映射为前端展示结构。
+   * 获取当前 scope 值。
+   *
+   * @returns {"mine"|"all"}
+   */
+  getCurrentTimelineScope() {
+    return resolveTimelineScopeByIndex(this.data.scheduleScopeIndex);
+  },
+
+  /**
+   * 将后端时间线行映射为前端展示结构。
    *
    * @param {any} item
    */
-  mapHistoryRow(item) {
+  mapTimelineRow(item) {
     const roomCode = String((item && item.roomCode) || "").trim().toUpperCase();
     const settlementId = String((item && (item.settlementId || item.roomCode)) || "").trim().toUpperCase();
-    const myAmount = Number(item && item.myAmount || 0);
-    const dissolvedAt = Number(item && item.dissolvedAt || 0);
+    const dissolvedAt = Number((item && item.dissolvedAt) || 0);
+
+    const hasMyAmount = !!(item && Object.prototype.hasOwnProperty.call(item, "myAmount"));
+    const myAmountRaw = hasMyAmount ? item.myAmount : null;
+    const myAmount = myAmountRaw === null || myAmountRaw === undefined ? null : Number(myAmountRaw || 0);
+
+    let myStatus = String((item && item.myStatus) || "").trim().toLowerCase();
+    if (myStatus !== "win" && myStatus !== "loss" && myStatus !== "draw" && myStatus !== "not_joined") {
+      if (myAmount === null) myStatus = "not_joined";
+      else if (myAmount > 0) myStatus = "win";
+      else if (myAmount < 0) myStatus = "loss";
+      else myStatus = "draw";
+    }
+
+    const members = (Array.isArray(item && item.members) ? item.members : []).map((m) => {
+      const amount = Number((m && m.amount) || 0);
+      return {
+        openId: String((m && m.openId) || ""),
+        displayName: String((m && m.displayName) || "成员"),
+        role: String((m && m.role) || ""),
+        active: !!(m && m.active),
+        amount,
+        amountText: formatAmountText(amount),
+        amountClass: resolveAmountClass(amount)
+      };
+    });
+
+    const previewMembers = members.slice(0, TIMELINE_PREVIEW_MEMBER_LIMIT);
+    const hiddenMemberCount = Math.max(0, members.length - previewMembers.length);
 
     return {
       settlementId,
       roomCode,
-      txCount: Number(item && item.txCount || 0),
       dissolvedAt,
       dissolvedAtText: dissolvedAt ? formatTime(dissolvedAt) : "",
+      txCount: Number((item && item.txCount) || 0),
+      memberCount: Number((item && item.memberCount) || members.length),
       myAmount,
-      myAmountText: formatAmountText(myAmount)
+      myStatus,
+      statusText: buildTimelineStatusText(myStatus, myAmount),
+      statusClass: `status-${myStatus}`,
+      members,
+      previewMembers,
+      hiddenMemberCount
     };
   },
 
   /**
-   * 首屏加载历史记录。
+   * 按年份分组时间线，保持接口返回顺序（默认倒序）。
+   *
+   * @param {any[]} rows
+   * @returns {{year:string, rows:any[]}[]}
    */
-  async loadHistoryFirstPage() {
-    if (this.data.historyLoading) return;
+  buildTimelineGroupsByYear(rows) {
+    const src = Array.isArray(rows) ? rows : [];
+    const groups = [];
+
+    for (const row of src) {
+      const ts = Number((row && row.dissolvedAt) || 0);
+      const year = ts > 0 ? String(new Date(ts).getFullYear()) : "未知";
+      const last = groups[groups.length - 1];
+      if (!last || last.year !== year) {
+        groups.push({ year, rows: [row] });
+      } else {
+        last.rows.push(row);
+      }
+    }
+
+    return groups;
+  },
+
+  /**
+   * 首屏加载时间线。
+   */
+  async loadTimelineFirstPage() {
+    const scope = this.getCurrentTimelineScope();
+    const reqSeq = Number(this._timelineReqSeq || 0) + 1;
+    this._timelineReqSeq = reqSeq;
     this.setData({
-      historyLoading: true,
-      historyError: "",
-      historyRows: [],
-      historyHasMore: false,
-      historyLoadingMore: false,
-      historyNextBeforeDissolvedAt: null,
-      historyNextBeforeRoomCode: ""
+      timelineLoading: true,
+      timelineError: "",
+      timelineRows: [],
+      timelineGroups: [],
+      timelineHasMore: false,
+      timelineLoadingMore: false,
+      timelineNextBeforeDissolvedAt: null,
+      timelineNextBeforeRoomCode: "",
+      expandedSettleIds: {}
     });
 
     try {
       const app = getApp();
       const r = await app.apiCall({
-        path: `/api/history/me?limit=${HISTORY_PAGE_LIMIT}`,
+        path: `/api/history/timeline?scope=${scope}&limit=${HISTORY_PAGE_LIMIT}`,
         method: "GET"
       });
+      // 若期间已触发更新请求（如切换 scope），则丢弃旧回包。
+      if (reqSeq !== Number(this._timelineReqSeq || 0)) return;
 
-      if (!r || !r.ok || !r.history) {
+      if (!r || !r.ok || !r.timeline) {
         this.setData({
-          historyLoading: false,
-          historyError: String((r && r.message) || "历史记录加载失败"),
-          historyRows: [],
-          historyHasMore: false,
-          historyNextBeforeDissolvedAt: null,
-          historyNextBeforeRoomCode: ""
+          timelineLoading: false,
+          timelineError: String((r && r.message) || "时间线加载失败"),
+          timelineRows: [],
+          timelineGroups: [],
+          timelineHasMore: false,
+          timelineNextBeforeDissolvedAt: null,
+          timelineNextBeforeRoomCode: "",
+          expandedSettleIds: {}
         });
         return;
       }
 
-      const history = r.history || {};
-      const rows = (history.rows || []).map((item) => this.mapHistoryRow(item));
+      const timeline = r.timeline || {};
+      const rows = (timeline.rows || []).map((item) => this.mapTimelineRow(item));
       this.setData({
-        historyLoading: false,
-        historyError: "",
-        historyRows: rows,
-        historyHasMore: !!history.hasMore,
-        historyNextBeforeDissolvedAt: history.nextBeforeDissolvedAt || null,
-        historyNextBeforeRoomCode: String(history.nextBeforeRoomCode || "")
+        timelineLoading: false,
+        timelineError: "",
+        timelineRows: rows,
+        timelineGroups: this.buildTimelineGroupsByYear(rows),
+        timelineHasMore: !!timeline.hasMore,
+        timelineNextBeforeDissolvedAt: timeline.nextBeforeDissolvedAt || null,
+        timelineNextBeforeRoomCode: String(timeline.nextBeforeRoomCode || ""),
+        expandedSettleIds: {}
       });
     } catch (err) {
-      console.error("loadHistoryFirstPage 失败", err);
+      console.error("loadTimelineFirstPage 失败", err);
+      if (reqSeq !== Number(this._timelineReqSeq || 0)) return;
       this.setData({
-        historyLoading: false,
-        historyError: "历史记录加载失败，请稍后重试",
-        historyRows: [],
-        historyHasMore: false,
-        historyNextBeforeDissolvedAt: null,
-        historyNextBeforeRoomCode: ""
+        timelineLoading: false,
+        timelineError: "时间线加载失败，请稍后重试",
+        timelineRows: [],
+        timelineGroups: [],
+        timelineHasMore: false,
+        timelineNextBeforeDissolvedAt: null,
+        timelineNextBeforeRoomCode: "",
+        expandedSettleIds: {}
       });
     }
   },
 
   /**
-   * 分页加载更多历史记录。
+   * 分页加载更多时间线。
    */
-  async handleLoadMoreHistory() {
-    if (this.data.historyLoading || this.data.historyLoadingMore) return;
-    if (!this.data.historyHasMore) return;
+  async loadTimelineMore() {
+    if (this.data.timelineLoading || this.data.timelineLoadingMore) return;
+    if (!this.data.timelineHasMore) return;
 
-    const beforeDissolvedAt = Number(this.data.historyNextBeforeDissolvedAt || 0);
-    const beforeRoomCode = String(this.data.historyNextBeforeRoomCode || "").trim().toUpperCase();
+    const beforeDissolvedAt = Number(this.data.timelineNextBeforeDissolvedAt || 0);
+    const beforeRoomCode = String(this.data.timelineNextBeforeRoomCode || "").trim().toUpperCase();
     if (!beforeDissolvedAt || !beforeRoomCode) return;
 
-    this.setData({ historyLoadingMore: true });
+    const scope = this.getCurrentTimelineScope();
+    const reqSeq = Number(this._timelineReqSeq || 0);
+
+    this.setData({ timelineLoadingMore: true });
     try {
       const app = getApp();
       const r = await app.apiCall({
         path:
-          `/api/history/me?limit=${HISTORY_PAGE_LIMIT}` +
+          `/api/history/timeline?scope=${scope}&limit=${HISTORY_PAGE_LIMIT}` +
           `&beforeDissolvedAt=${beforeDissolvedAt}` +
           `&beforeRoomCode=${encodeURIComponent(beforeRoomCode)}`,
         method: "GET"
       });
-
-      if (!r || !r.ok || !r.history) {
-        wx.showToast({ title: (r && r.message) || "加载更多失败", icon: "none" });
-        this.setData({ historyLoadingMore: false });
+      // 首屏已刷新或 scope 已切换时，忽略旧分页回包，避免数据串页。
+      if (reqSeq !== Number(this._timelineReqSeq || 0) || scope !== this.getCurrentTimelineScope()) {
+        this.setData({ timelineLoadingMore: false });
         return;
       }
 
-      const history = r.history || {};
-      const moreRows = (history.rows || []).map((item) => this.mapHistoryRow(item));
-      const mergedRows = (this.data.historyRows || []).concat(moreRows);
+      if (!r || !r.ok || !r.timeline) {
+        wx.showToast({ title: (r && r.message) || "加载更多失败", icon: "none" });
+        this.setData({ timelineLoadingMore: false });
+        return;
+      }
+
+      const timeline = r.timeline || {};
+      const moreRows = (timeline.rows || []).map((item) => this.mapTimelineRow(item));
+      const mergedRows = (this.data.timelineRows || []).concat(moreRows);
 
       this.setData({
-        historyRows: mergedRows,
-        historyHasMore: !!history.hasMore,
-        historyNextBeforeDissolvedAt: history.nextBeforeDissolvedAt || null,
-        historyNextBeforeRoomCode: String(history.nextBeforeRoomCode || ""),
-        historyLoadingMore: false
+        timelineRows: mergedRows,
+        timelineGroups: this.buildTimelineGroupsByYear(mergedRows),
+        timelineHasMore: !!timeline.hasMore,
+        timelineNextBeforeDissolvedAt: timeline.nextBeforeDissolvedAt || null,
+        timelineNextBeforeRoomCode: String(timeline.nextBeforeRoomCode || ""),
+        timelineLoadingMore: false
       });
     } catch (err) {
-      console.error("handleLoadMoreHistory 失败", err);
-      this.setData({ historyLoadingMore: false });
+      console.error("loadTimelineMore 失败", err);
+      this.setData({ timelineLoadingMore: false });
       wx.showToast({ title: "加载更多失败", icon: "none" });
     }
   },
 
   /**
-   * 历史列表触底：自动续拉下一页。
+   * 时间线触底：自动续拉下一页。
    */
-  handleHistoryReachBottom() {
-    this.handleLoadMoreHistory();
+  handleTimelineReachBottom() {
+    this.loadTimelineMore();
   },
 
   /**
-   * 点击历史项：弹窗显示该局完整胜负关系。
+   * 切换时间线筛选（与我相关 / 全部）。
    *
    * @param {any} e
    */
-  async handleTapHistory(e) {
+  handleScopeChange(e) {
+    const nextIndex = Number((e && e.detail && e.detail.value) || 0);
+    if (!Number.isInteger(nextIndex)) return;
+    if (nextIndex === this.data.scheduleScopeIndex) return;
+
+    this.setData(
+      {
+        scheduleScopeIndex: nextIndex,
+        currentScopeLabel: this.data.scopeOptions[nextIndex] || TIMELINE_SCOPE_OPTIONS[0].label
+      },
+      () => this.loadTimelineFirstPage()
+    );
+  },
+
+  /**
+   * 展开/收起单局成员明细。
+   *
+   * @param {any} e
+   */
+  handleToggleItemExpand(e) {
     const settlementId = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.settlementid) || "")
       .trim()
       .toUpperCase();
     if (!settlementId) return;
 
-    this.setData({
-      showHistoryDetail: true,
-      historyDetailLoading: true,
-      historyDetailTitle: `房间 ${settlementId}`,
-      historyDetailTxCount: 0,
-      historyDetailDissolvedAtText: "",
-      historyDetailRows: []
-    });
-
-    try {
-      const app = getApp();
-      const r = await app.apiCall({
-        path: `/api/history/me/${encodeURIComponent(settlementId)}`,
-        method: "GET"
-      });
-
-      if (!r || !r.ok || !r.settlement) {
-        wx.showToast({ title: (r && r.message) || "历史详情加载失败", icon: "none" });
-        this.setData({
-          showHistoryDetail: false,
-          historyDetailLoading: false
-        });
-        return;
-      }
-
-      const s = r.settlement || {};
-      const totals = s.totals || {};
-      const members = s.membersSnapshot || [];
-      const rows = members.map((m) => {
-        const amountRaw = totals[m.openId];
-        const amount = Number.isInteger(amountRaw) ? amountRaw : Number(amountRaw || 0);
-        return {
-          openId: String(m.openId || ""),
-          displayName: String(m.displayName || ""),
-          avatarUrlResolved: resolveApiAssetUrl(m.avatarUrl),
-          role: String(m.role || ""),
-          active: !!m.active,
-          amount,
-          amountText: formatAmountText(amount)
-        };
-      });
-
-      rows.sort((a, b) => {
-        if (a.role === "owner" && b.role !== "owner") return -1;
-        if (b.role === "owner" && a.role !== "owner") return 1;
-        return Math.abs(b.amount) - Math.abs(a.amount);
-      });
-
-      this.setData({
-        showHistoryDetail: true,
-        historyDetailLoading: false,
-        historyDetailTitle: `房间 ${String(s.roomCode || settlementId).trim().toUpperCase()}`,
-        historyDetailTxCount: Number(s.txCount || 0),
-        historyDetailDissolvedAtText: s.dissolvedAt ? formatTime(s.dissolvedAt) : "",
-        historyDetailRows: rows
-      });
-    } catch (err) {
-      console.error("handleTapHistory 失败", err);
-      wx.showToast({ title: "历史详情加载失败", icon: "none" });
-      this.setData({
-        showHistoryDetail: false,
-        historyDetailLoading: false
-      });
-    }
-  },
-
-  handleCloseHistoryDetail() {
-    this.setData({ showHistoryDetail: false });
+    const next = {
+      ...(this.data.expandedSettleIds || {})
+    };
+    next[settlementId] = !next[settlementId];
+    this.setData({ expandedSettleIds: next });
   },
 
   noop() {},

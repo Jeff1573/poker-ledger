@@ -85,6 +85,14 @@ function findHistoryRow(rows, roomCode) {
   return rows.find((x) => String(x.roomCode || "") === String(roomCode || "")) || null;
 }
 
+/**
+ * @param {any[]} rows
+ * @param {string} roomCode
+ */
+function findTimelineRow(rows, roomCode) {
+  return rows.find((x) => String(x.roomCode || "") === String(roomCode || "")) || null;
+}
+
 function getFreePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -266,6 +274,80 @@ test("历史分页：dissolvedAt + roomCode 双游标连续翻页", () => {
   }
 });
 
+test("时间线：scope=mine 仅返回参与局，且 members/myStatus 正确", () => {
+  const page = store.listTimelineHistory(MEMBER_B, "mine", null, null, 50);
+  const row1 = findTimelineRow(page.rows, round1RoomCode);
+  const row2 = findTimelineRow(page.rows, round2RoomCode);
+  const row3 = findTimelineRow(page.rows, round3RoomCode);
+
+  assert.ok(row1 && row2);
+  assert.equal(row3, null);
+
+  assert.equal(row1.myStatus, "win");
+  assert.equal(Number(row1.myAmount || 0), 80);
+  assert.equal(row2.myStatus, "loss");
+  assert.equal(Number(row2.myAmount || 0), -20);
+
+  assert.equal(Array.isArray(row1.members), true);
+  assert.equal(row1.members.length, 3);
+  assert.equal(Number(row1.memberCount || 0), 3);
+  assert.equal(String((row1.members[0] && row1.members[0].openId) || ""), OWNER_A);
+
+  const me = row1.members.find((m) => String(m.openId || "") === MEMBER_B);
+  assert.ok(me);
+  assert.equal(Number(me.amount || 0), 80);
+});
+
+test("时间线：scope=all 返回全平台记录，未参与为 not_joined", () => {
+  const page = store.listTimelineHistory(OUTSIDER_D, "all", null, null, 50);
+  const row1 = findTimelineRow(page.rows, round1RoomCode);
+  const row2 = findTimelineRow(page.rows, round2RoomCode);
+  const row3 = findTimelineRow(page.rows, round3RoomCode);
+
+  assert.ok(row1 && row2 && row3);
+  assert.equal(row1.myStatus, "not_joined");
+  assert.equal(row2.myStatus, "not_joined");
+  assert.equal(row3.myStatus, "not_joined");
+  assert.equal(row1.myAmount, null);
+  assert.equal(row2.myAmount, null);
+  assert.equal(row3.myAmount, null);
+
+  assert.equal(Array.isArray(row1.members), true);
+  assert.equal(row1.members.length, 3);
+  for (const m of row1.members) {
+    assert.equal(Number.isInteger(Number(m.amount || 0)), true);
+  }
+});
+
+test("时间线分页：scope=all dissolvedAt + roomCode 双游标连续翻页", () => {
+  const page1 = store.listTimelineHistory(OWNER_A, "all", null, null, 2);
+  assert.equal(page1.rows.length, 2);
+  assert.equal(page1.hasMore, true);
+  assert.ok(Number(page1.nextBeforeDissolvedAt || 0) > 0);
+  assert.ok(String(page1.nextBeforeRoomCode || ""));
+
+  const page2 = store.listTimelineHistory(
+    OWNER_A,
+    "all",
+    page1.nextBeforeDissolvedAt,
+    page1.nextBeforeRoomCode,
+    2
+  );
+  assert.equal(page2.rows.length, 1);
+  assert.equal(page2.hasMore, false);
+
+  const ids = new Set([...page1.rows.map((x) => String(x.settlementId || "")), ...page2.rows.map((x) => String(x.settlementId || ""))]);
+  assert.equal(ids.size, 3);
+
+  const cursorAt = Number(page1.nextBeforeDissolvedAt || 0);
+  const cursorRoom = String(page1.nextBeforeRoomCode || "");
+  for (const row of page2.rows) {
+    const at = Number(row.dissolvedAt || 0);
+    const room = String(row.roomCode || "");
+    assert.ok(at < cursorAt || (at === cursorAt && room < cursorRoom));
+  }
+});
+
 test("GET /api/history/me 未鉴权返回 401", async () => {
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -276,6 +358,25 @@ test("GET /api/history/me 未鉴权返回 401", async () => {
     await waitServerReady(baseUrl, token);
 
     const res = await fetch(`${baseUrl}/api/history/me`, { method: "GET" });
+    assert.equal(res.status, 401);
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.code, "UNAUTHORIZED");
+  } finally {
+    await stopServerProcess(child);
+  }
+});
+
+test("GET /api/history/timeline 未鉴权返回 401", async () => {
+  const port = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const token = signToken(OWNER_A);
+  const child = startServerProcess(port);
+
+  try {
+    await waitServerReady(baseUrl, token);
+
+    const res = await fetch(`${baseUrl}/api/history/timeline`, { method: "GET" });
     assert.equal(res.status, 401);
     const body = await res.json();
     assert.equal(body.ok, false);
@@ -312,6 +413,63 @@ test("GET /api/history/me 参数非法返回 ok:false", async () => {
     const b3 = await r3.json();
     assert.equal(b3.ok, false);
     assert.equal(b3.code, "INVALID_CURSOR");
+  } finally {
+    await stopServerProcess(child);
+  }
+});
+
+test("GET /api/history/timeline 参数非法返回 ok:false", async () => {
+  const port = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const token = signToken(OWNER_A);
+  const child = startServerProcess(port);
+
+  try {
+    await waitServerReady(baseUrl, token);
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const r1 = await fetch(`${baseUrl}/api/history/timeline?scope=xxx`, { method: "GET", headers });
+    const b1 = await r1.json();
+    assert.equal(b1.ok, false);
+    assert.equal(b1.code, "INVALID_SCOPE");
+
+    const r2 = await fetch(`${baseUrl}/api/history/timeline?scope=all&beforeRoomCode=XXXXXX`, { method: "GET", headers });
+    const b2 = await r2.json();
+    assert.equal(b2.ok, false);
+    assert.equal(b2.code, "INVALID_CURSOR");
+
+    const r3 = await fetch(`${baseUrl}/api/history/timeline?scope=all&beforeDissolvedAt=abc&beforeRoomCode=XXXXXX`, {
+      method: "GET",
+      headers
+    });
+    const b3 = await r3.json();
+    assert.equal(b3.ok, false);
+    assert.equal(b3.code, "INVALID_CURSOR");
+  } finally {
+    await stopServerProcess(child);
+  }
+});
+
+test("GET /api/history/timeline scope=all 普通登录用户可访问", async () => {
+  const port = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const token = signToken(MEMBER_B);
+  const child = startServerProcess(port);
+
+  try {
+    await waitServerReady(baseUrl, token);
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const r = await fetch(`${baseUrl}/api/history/timeline?scope=all&limit=5`, {
+      method: "GET",
+      headers
+    });
+    const body = await r.json();
+    assert.equal(body.ok, true);
+    assert.ok(body.timeline);
+    assert.equal(String((body.timeline && body.timeline.scope) || ""), "all");
+    assert.equal(Array.isArray(body.timeline.rows), true);
+    assert.ok(body.timeline.rows.length > 0);
   } finally {
     await stopServerProcess(child);
   }

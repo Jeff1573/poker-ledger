@@ -835,6 +835,75 @@ app.post("/api/rooms/dissolve", authMiddleware, async (req, res) => {
 });
 
 /**
+ * 获取时间线历史分页（支持 scope=mine|all）。
+ */
+app.get("/api/history/timeline", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+
+  const scopeText = String((req.query && req.query.scope) || "mine").trim().toLowerCase();
+  const limitText = String((req.query && req.query.limit) || "").trim();
+  const beforeDissolvedAtText = String((req.query && req.query.beforeDissolvedAt) || "").trim();
+  const beforeRoomCodeText = String((req.query && req.query.beforeRoomCode) || "").trim().toUpperCase();
+
+  if (scopeText !== "mine" && scopeText !== "all") {
+    routeLog(req, "warn", "timeline.list.fail", "获取时间线失败：scope 非法", {
+      code: "INVALID_SCOPE",
+      scopeText
+    });
+    return fail(res, "INVALID_SCOPE", "scope 仅支持 mine 或 all");
+  }
+
+  let limit = HISTORY_DEFAULT_LIMIT;
+  if (limitText) {
+    const parsedLimit = parsePositiveIntParam(limitText);
+    if (!parsedLimit || parsedLimit > HISTORY_MAX_LIMIT) {
+      routeLog(req, "warn", "timeline.list.fail", "获取时间线失败：limit 非法", {
+        code: "INVALID_LIMIT",
+        limitText
+      });
+      return fail(res, "INVALID_LIMIT", `limit 必须是 1~${HISTORY_MAX_LIMIT} 的整数`);
+    }
+    limit = parsedLimit;
+  }
+
+  const hasBeforeDissolvedAt = !!beforeDissolvedAtText;
+  const hasBeforeRoomCode = !!beforeRoomCodeText;
+  let beforeDissolvedAt = null;
+  let beforeRoomCode = null;
+
+  // 游标必须“要么都传，要么都不传”，避免出现翻页边界不确定。
+  if (hasBeforeDissolvedAt || hasBeforeRoomCode) {
+    if (!hasBeforeDissolvedAt || !hasBeforeRoomCode) {
+      routeLog(req, "warn", "timeline.list.fail", "获取时间线失败：游标参数不完整", {
+        code: "INVALID_CURSOR"
+      });
+      return fail(res, "INVALID_CURSOR", "beforeDissolvedAt 与 beforeRoomCode 必须同时提供");
+    }
+
+    const parsedBeforeDissolvedAt = parsePositiveIntParam(beforeDissolvedAtText);
+    if (!parsedBeforeDissolvedAt) {
+      routeLog(req, "warn", "timeline.list.fail", "获取时间线失败：beforeDissolvedAt 非法", {
+        code: "INVALID_CURSOR",
+        beforeDissolvedAtText
+      });
+      return fail(res, "INVALID_CURSOR", "beforeDissolvedAt 必须是正整数");
+    }
+
+    beforeDissolvedAt = parsedBeforeDissolvedAt;
+    beforeRoomCode = beforeRoomCodeText;
+  }
+
+  const timeline = store.listTimelineHistory(openId, scopeText, beforeDissolvedAt, beforeRoomCode, limit);
+  routeLog(req, "debug", "timeline.list.ok", "获取时间线成功", {
+    scope: scopeText,
+    limit,
+    rowCount: Array.isArray(timeline.rows) ? timeline.rows.length : 0,
+    hasMore: !!timeline.hasMore
+  });
+  return ok(res, { timeline });
+});
+
+/**
  * 获取“我的历史记录”分页（仅返回当前用户参与过的结算）。
  */
 app.get("/api/history/me", authMiddleware, async (req, res) => {

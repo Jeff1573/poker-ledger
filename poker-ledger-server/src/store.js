@@ -320,6 +320,123 @@ function queryMySettlementHistoryPage(openId, beforeDissolvedAt, beforeRoomCode,
   };
 }
 
+/**
+ * 查询时间线结算分页（支持 mine/all，dissolvedAt/roomCode 双游标）。
+ *
+ * @param {string} openId
+ * @param {"mine"|"all"} scope
+ * @param {number|null} beforeDissolvedAt
+ * @param {string|null} beforeRoomCode
+ * @param {number} limit
+ * @returns {{rows:any[], hasMore:boolean, nextBeforeDissolvedAt:number|null, nextBeforeRoomCode:string|null}}
+ */
+function querySettlementTimelinePage(openId, scope, beforeDissolvedAt, beforeRoomCode, limit) {
+  const oid = String(openId || "");
+  const queryScope = scope === "all" ? "all" : "mine";
+  const pageLimit = normalizeHistoryLimit(limit);
+  const fetchLimit = pageLimit + 1;
+
+  const cursorDissolvedAt = Number(beforeDissolvedAt || 0);
+  const cursorRoomCode = normalizeRoomCode(beforeRoomCode);
+  const hasCursor = Number.isInteger(cursorDissolvedAt) && cursorDissolvedAt > 0 && !!cursorRoomCode;
+
+  let rows = [];
+  if (queryScope === "all") {
+    rows = hasCursor
+      ? stmt.listSettlementTimelineBefore.all(cursorDissolvedAt, cursorDissolvedAt, cursorRoomCode, fetchLimit)
+      : stmt.listSettlementTimelineLatest.all(fetchLimit);
+  } else {
+    rows = hasCursor
+      ? stmt.listMySettlementTimelineBefore.all(oid, cursorDissolvedAt, cursorDissolvedAt, cursorRoomCode, fetchLimit)
+      : stmt.listMySettlementTimelineLatest.all(oid, fetchLimit);
+  }
+
+  const pageRows = rows.slice(0, pageLimit).map((row) => ({
+    roomCode: normalizeRoomCode(row.roomCode),
+    ownerOpenId: String(row.ownerOpenId || ""),
+    dissolvedAt: Number(row.dissolvedAt || 0),
+    txCount: Number(row.txCount || 0)
+  }));
+  const hasMore = rows.length > pageLimit;
+
+  let nextBeforeDissolvedAt = null;
+  let nextBeforeRoomCode = null;
+  if (hasMore && pageRows.length > 0) {
+    const tail = pageRows[pageRows.length - 1];
+    nextBeforeDissolvedAt = Number(tail.dissolvedAt || 0);
+    nextBeforeRoomCode = String(tail.roomCode || "");
+  }
+
+  return {
+    rows: pageRows,
+    hasMore,
+    nextBeforeDissolvedAt,
+    nextBeforeRoomCode
+  };
+}
+
+/**
+ * 把时间线记录转换为对外结构（附成员输赢与我的状态）。
+ *
+ * @param {string} openId
+ * @param {{roomCode:string, ownerOpenId:string, txCount:number, dissolvedAt:number}} row
+ */
+function buildTimelineRow(openId, row) {
+  const oid = String(openId || "");
+  const roomCode = normalizeRoomCode(row.roomCode);
+  const settlement = buildSettlementPayload(roomCode, {
+    ownerOpenId: String(row.ownerOpenId || ""),
+    txCount: Number(row.txCount || 0),
+    dissolvedAt: Number(row.dissolvedAt || 0)
+  });
+
+  const totals = settlement.totals || {};
+  const members = (settlement.membersSnapshot || []).map((m) => {
+    const amountRaw = totals[m.openId];
+    const amount = Number.isFinite(Number(amountRaw)) ? Number(amountRaw) : 0;
+    return {
+      openId: String(m.openId || ""),
+      displayName: String(m.displayName || ""),
+      role: String(m.role || ""),
+      active: !!m.active,
+      amount
+    };
+  });
+
+  members.sort((a, b) => {
+    if (a.role === "owner" && b.role !== "owner") return -1;
+    if (b.role === "owner" && a.role !== "owner") return 1;
+
+    const absDiff = Math.abs(b.amount) - Math.abs(a.amount);
+    if (absDiff !== 0) return absDiff;
+
+    const nameDiff = String(a.displayName || "").localeCompare(String(b.displayName || ""));
+    if (nameDiff !== 0) return nameDiff;
+    return String(a.openId || "").localeCompare(String(b.openId || ""));
+  });
+
+  const joined = members.some((m) => m.openId === oid);
+  const myAmountRaw = totals[oid];
+  const myAmount = joined ? (Number.isFinite(Number(myAmountRaw)) ? Number(myAmountRaw) : 0) : null;
+  let myStatus = "not_joined";
+  if (joined) {
+    if (Number(myAmount || 0) > 0) myStatus = "win";
+    else if (Number(myAmount || 0) < 0) myStatus = "loss";
+    else myStatus = "draw";
+  }
+
+  return {
+    settlementId: roomCode,
+    roomCode,
+    dissolvedAt: settlement.dissolvedAt,
+    txCount: settlement.txCount,
+    myAmount,
+    myStatus,
+    memberCount: members.length,
+    members
+  };
+}
+
 const stmt = {
   getMeta: db.prepare("SELECT value FROM meta WHERE key = ?"),
   upsertMeta: db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)"),
@@ -397,6 +514,26 @@ const stmt = {
   ),
   getSettlement: db.prepare("SELECT roomCode, ownerOpenId, txCount, dissolvedAt FROM settlements WHERE roomCode = ?"),
   getSettlementMemberByOpenId: db.prepare("SELECT roomCode, openId FROM settlement_members WHERE roomCode = ? AND openId = ?"),
+  listSettlementTimelineLatest: db.prepare(
+    "SELECT roomCode, ownerOpenId, txCount, dissolvedAt FROM settlements ORDER BY dissolvedAt DESC, roomCode DESC LIMIT ?"
+  ),
+  listSettlementTimelineBefore: db.prepare(
+    "SELECT roomCode, ownerOpenId, txCount, dissolvedAt FROM settlements WHERE (dissolvedAt < ? OR (dissolvedAt = ? AND roomCode < ?)) ORDER BY dissolvedAt DESC, roomCode DESC LIMIT ?"
+  ),
+  listMySettlementTimelineLatest: db.prepare(
+    "SELECT s.roomCode, s.ownerOpenId, s.txCount, s.dissolvedAt " +
+      "FROM settlement_members sm " +
+      "INNER JOIN settlements s ON s.roomCode = sm.roomCode " +
+      "WHERE sm.openId = ? " +
+      "ORDER BY s.dissolvedAt DESC, s.roomCode DESC LIMIT ?"
+  ),
+  listMySettlementTimelineBefore: db.prepare(
+    "SELECT s.roomCode, s.ownerOpenId, s.txCount, s.dissolvedAt " +
+      "FROM settlement_members sm " +
+      "INNER JOIN settlements s ON s.roomCode = sm.roomCode " +
+      "WHERE sm.openId = ? AND (s.dissolvedAt < ? OR (s.dissolvedAt = ? AND s.roomCode < ?)) " +
+      "ORDER BY s.dissolvedAt DESC, s.roomCode DESC LIMIT ?"
+  ),
   listMySettlementHistoryLatest: db.prepare(
     "SELECT s.roomCode, s.dissolvedAt, s.txCount, COALESCE(st.total, 0) AS myAmount " +
       "FROM settlement_members sm " +
@@ -1125,6 +1262,28 @@ function listMySettlementHistory(openId, beforeDissolvedAt, beforeRoomCode, limi
 }
 
 /**
+ * 获取时间线历史分页（支持 mine/all）。
+ *
+ * @param {string} openId
+ * @param {"mine"|"all"} scope
+ * @param {number|null} beforeDissolvedAt
+ * @param {string|null} beforeRoomCode
+ * @param {number} limit
+ */
+function listTimelineHistory(openId, scope, beforeDissolvedAt, beforeRoomCode, limit) {
+  const queryScope = scope === "all" ? "all" : "mine";
+  const page = querySettlementTimelinePage(openId, queryScope, beforeDissolvedAt, beforeRoomCode, limit);
+  const rows = page.rows.map((row) => buildTimelineRow(openId, row));
+  return {
+    scope: queryScope,
+    rows,
+    hasMore: page.hasMore,
+    nextBeforeDissolvedAt: page.nextBeforeDissolvedAt,
+    nextBeforeRoomCode: page.nextBeforeRoomCode
+  };
+}
+
+/**
  * 获取“我参与过的某次结算详情”。
  *
  * @param {string} openId
@@ -1238,6 +1397,7 @@ module.exports = {
   listRoomTxPage,
   getSettlement,
   listMySettlementHistory,
+  listTimelineHistory,
   getMySettlement,
   getLeaderboard,
   getMe,
