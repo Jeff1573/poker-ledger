@@ -30,12 +30,12 @@ const ENDPOINTS_BY_ENV = {
     WS_BASE_URL: "ws://127.0.0.1:3000"
   },
   trial: {
-    API_BASE_URL: "https://dev.mdice.top",
-    WS_BASE_URL: "wss://dev.mdice.top"
+    API_BASE_URL: "https://dev.20260326.xyz",
+    WS_BASE_URL: "wss://dev.20260326.xyz"
   },
   release: {
-    API_BASE_URL: "https://jp.mdice.top",
-    WS_BASE_URL: "wss://jp.mdice.top"
+    API_BASE_URL: "https://jp.20260326.xyz",
+    WS_BASE_URL: "wss://jp.20260326.xyz"
   }
 };
 
