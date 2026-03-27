@@ -1,37 +1,15 @@
 /**
- * 本地存储仅用于「体验优化」：
- * - 最近使用的房间号输入回显
- * - 缓存登录态 token（便于恢复房间）
+ * 本地存储仅用于「轻量体验优化」：
+ * - 缓存登录态 token / openId，便于恢复会话
+ * - 记录房主首次分享引导的一次性标记
  * - 不作为业务真相来源（业务真相以后端为准）
  */
-const KEY_LAST_ROOM_CODE = "PL_LAST_ROOM_CODE";
+// JWT 本地缓存 key：用于小程序重启后快速恢复登录态。
 const KEY_TOKEN = "PL_TOKEN";
+// openId 本地缓存 key：与 token 配对恢复当前会话身份。
 const KEY_OPEN_ID = "PL_OPEN_ID";
+// 房主首次分享引导标记 key：只在创建房间后首次进入房间时消费一次。
 const KEY_PENDING_OWNER_SHARE_GUIDE_ROOM = "PL_PENDING_OWNER_SHARE_GUIDE_ROOM";
-
-function setLastRoomCode(code) {
-  try {
-    wx.setStorageSync(KEY_LAST_ROOM_CODE, code);
-  } catch (err) {
-    // 忽略本地存储失败
-  }
-}
-
-function getLastRoomCode() {
-  try {
-    return wx.getStorageSync(KEY_LAST_ROOM_CODE) || "";
-  } catch (err) {
-    return "";
-  }
-}
-
-function clearLastRoomCode() {
-  try {
-    wx.removeStorageSync(KEY_LAST_ROOM_CODE);
-  } catch (err) {
-    // 忽略本地存储失败
-  }
-}
 
 function setToken(token) {
   try {
@@ -104,9 +82,6 @@ function consumePendingOwnerShareGuideRoom(roomCode) {
 }
 
 module.exports = {
-  setLastRoomCode,
-  getLastRoomCode,
-  clearLastRoomCode,
   setToken,
   getToken,
   setOpenId,

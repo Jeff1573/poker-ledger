@@ -1448,7 +1448,6 @@ Page({
         return;
       }
 
-      storage.clearLastRoomCode();
       this.closeSocket();
       wx.redirectTo({ url: `/pages/settlement/settlement?roomCode=${r.settlementId || this.data.roomCode}` });
     } catch (err) {
@@ -1468,7 +1467,6 @@ Page({
     if (this._roomGoneHandled) return;
     this._roomGoneHandled = true;
 
-    storage.clearLastRoomCode();
     this.closeSocket();
     if (this.data.role === "owner") {
       wx.redirectTo({ url: `/pages/settlement/settlement?roomCode=${settlementId || this.data.roomCode}` });

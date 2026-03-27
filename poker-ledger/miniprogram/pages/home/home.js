@@ -2,6 +2,7 @@ const { validateRoomCode } = require("../../utils/validator");
 const CONST = require("../../utils/const");
 const storage = require("../../utils/storage");
 const { resolveApiAssetUrl } = require("../../utils/url");
+// 小程序版本环境白名单：仅识别微信标准 envVersion 枚举值。
 const VALID_MINI_ENV_VERSIONS = new Set(["develop", "trial", "release"]);
 
 /**
@@ -69,6 +70,30 @@ function extractInviteRoomCodeFromOptions(options) {
 }
 
 /**
+ * 判断首页输入框是否残留了“刚失效的当前房间号”。
+ * 仅在以下条件同时成立时清空：
+ * - 本次 bootstrap 已确认用户当前不在房间中
+ * - 没有新的分享/扫码邀请码待处理
+ * - 输入框里的值正好等于上一次 activeRoomCode
+ *
+ * 这样可以清掉“已解散/已退出房间”的残留值，同时不影响用户本次手动输入的其它房间号。
+ *
+ * @param {{nextInRoom:boolean, prevActiveRoomCode:any, pendingRoomCode:any, roomCodeInput:any}} input
+ * @returns {boolean}
+ */
+function shouldClearStaleRoomCodeInput(input) {
+  const nextInRoom = !!(input && input.nextInRoom);
+  const prevActiveRoomCode = String((input && input.prevActiveRoomCode) || "").trim().toUpperCase();
+  const pendingRoomCode = String((input && input.pendingRoomCode) || "").trim().toUpperCase();
+  const roomCodeInput = String((input && input.roomCodeInput) || "").trim().toUpperCase();
+
+  if (nextInRoom) return false;
+  if (!prevActiveRoomCode) return false;
+  if (pendingRoomCode) return false;
+  return !!roomCodeInput && roomCodeInput === prevActiveRoomCode;
+}
+
+/**
  * 读取“小程序版本管理”中的版本号。
  * 展示策略：
  * - version 有值：展示具体版本号（如 v1.2.3）
@@ -132,8 +157,6 @@ Page({
     // 仅在本次进入小程序后的首次首页初始化中，允许自动跳转房间 tab 一次。
     this._entryAutoJumpChecked = false;
     this._autoSwitchingRoom = false;
-
-    const last = storage.getLastRoomCode();
     const pendingRoomCode = extractInviteRoomCodeFromOptions(options);
 
     // 说明：新版推荐做法是让用户主动选择头像 + 输入昵称（无需获取 userInfo 明文授权）
@@ -141,15 +164,11 @@ Page({
       !!wx.canIUse && wx.canIUse("button.open-type.chooseAvatar") && wx.canIUse("input.type.nickname");
 
     this.setData({
-      roomCodeInput: pendingRoomCode || last || "",
+      roomCodeInput: pendingRoomCode || "",
       pendingRoomCode,
       supportChooseAvatar,
       miniVersionText: resolveMiniProgramVersionText()
     });
-
-    if (pendingRoomCode) {
-      storage.setLastRoomCode(pendingRoomCode);
-    }
   },
 
   onShow() {
@@ -163,7 +182,6 @@ Page({
         pendingRoomCode: inviteRoomCode,
         roomCodeInput: inviteRoomCode
       });
-      storage.setLastRoomCode(inviteRoomCode);
     }
 
     this.bootstrap();
@@ -208,7 +226,8 @@ Page({
       const activeRoomRole = inRoom ? String(me.role || "").trim().toLowerCase() : "";
       const user = me.user || null;
       const hasProfile = !!(user && user.displayName && user.avatarUrlWx);
-      this.setData({
+      const prevActiveRoomCode = String(this.data.activeRoomCode || "").trim().toUpperCase();
+      const nextPageState = {
         user,
         hasProfile,
         userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx),
@@ -216,7 +235,22 @@ Page({
         activeRoomCode,
         activeRoomRole,
         activeRoomIsOwner: activeRoomRole === "owner"
-      });
+      };
+
+      // 兜底清理首页内存态残留：
+      // 已确认“不在房间”且没有新邀请码时，若输入框仍等于刚失效的房间号，则主动清空。
+      if (
+        shouldClearStaleRoomCodeInput({
+          nextInRoom: inRoom,
+          prevActiveRoomCode,
+          pendingRoomCode: this.data.pendingRoomCode,
+          roomCodeInput: this.data.roomCodeInput
+        })
+      ) {
+        nextPageState.roomCodeInput = "";
+      }
+
+      this.setData(nextPageState);
 
       // 2) 首次进入首页且已在房间时，优先自动跳转到房间 tab。
       // 首次检查定义：本次小程序运行周期内，首页首次成功完成 /api/me 判断。
@@ -450,7 +484,6 @@ Page({
       // 清除本地存储
       storage.setToken("");
       storage.setOpenId("");
-      storage.clearLastRoomCode();
 
       wx.hideLoading();
 
@@ -592,7 +625,6 @@ Page({
       .trim()
       .toUpperCase();
     this.setData({ roomCodeInput: v });
-    storage.setLastRoomCode(v);
   },
 
   async handleCreateRoom() {
@@ -674,7 +706,6 @@ Page({
       }
 
       this.setData({ roomCodeInput: code });
-      storage.setLastRoomCode(code);
       await this.joinRoomByCode(code);
     } catch (err) {
       // 用户取消扫码属于正常场景，不提示报错
