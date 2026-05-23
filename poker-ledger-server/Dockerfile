@@ -24,8 +24,9 @@ RUN addgroup -g 1001 -S nodejs && \
 # 从依赖阶段复制 node_modules
 COPY --from=deps /app/node_modules ./node_modules
 
-# 复制应用代码
+# 复制应用代码与后台静态资源，确保 /admin 页面在容器内可访问
 COPY src ./src
+COPY web ./web
 COPY package.json ./
 
 # 创建数据目录
