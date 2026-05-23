@@ -15,6 +15,14 @@ const {
   signRoomImageAccessToken,
   verifyRoomImageAccessToken
 } = require("./auth");
+const {
+  initAdminPassword,
+  verifyAdminCredentials,
+  createAdminSession,
+  destroyAdminSession,
+  requireAdmin,
+  requireAdminCsrf
+} = require("./adminAuth");
 const { createWsHub } = require("./wsHub");
 const logger = require("./logger");
 
@@ -57,6 +65,7 @@ app.use((req, res, next) => {
 // 上传目录（用于头像等资源）
 const UPLOAD_ROOT = path.join(__dirname, "..", "data", "uploads");
 const AVATAR_DIR = path.join(UPLOAD_ROOT, "avatars");
+const WEB_ROOT = path.join(__dirname, "..", "web");
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
 
 // 静态资源托管：前端可通过 `${API_BASE_URL}/uploads/...` 直接访问
@@ -83,8 +92,11 @@ const MINICODE_MEM_CACHE_MAX_AGE_MS = MINICODE_HTTP_CACHE_MAX_AGE_SEC * 1000;
 const ROOM_IMAGE_ACCESS_TTL_SEC = Number(config.ROOM_IMAGE_ACCESS_TTL_SEC || 300);
 const ROOM_IMAGE_RATE_LIMIT_WINDOW_MS = Number(config.ROOM_IMAGE_RATE_LIMIT_WINDOW_MS || 60000);
 const ROOM_IMAGE_RATE_LIMIT_MAX = Number(config.ROOM_IMAGE_RATE_LIMIT_MAX || 30);
+const ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const ADMIN_LOGIN_RATE_LIMIT_MAX = 10;
 const roomMiniCodeCache = new Map();
 const roomImageIssueRateLimit = new Map();
+const adminLoginRateLimit = new Map();
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -372,6 +384,226 @@ function routeLog(req, level, event, msg, extra) {
   }
   logger.info(payload);
 }
+
+/**
+ * 清理后台登录失败限流窗口，避免内存随攻击流量长期增长。
+ *
+ * @param {number} nowMs
+ */
+function pruneAdminLoginRateLimit(nowMs) {
+  for (const [key, entry] of adminLoginRateLimit.entries()) {
+    const windowStartAt = Number((entry && entry.windowStartAt) || 0);
+    if (!windowStartAt || nowMs - windowStartAt >= ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS) {
+      adminLoginRateLimit.delete(key);
+    }
+  }
+}
+
+/**
+ * 检查后台登录失败次数是否超限；在执行 scrypt 前拦截高频尝试。
+ *
+ * @param {import("express").Request} req
+ */
+function checkAdminLoginRateLimit(req) {
+  const nowMs = Date.now();
+  pruneAdminLoginRateLimit(nowMs);
+
+  const key = getRateLimitIp(req);
+  const entry = adminLoginRateLimit.get(key);
+  if (!entry || Number(entry.count || 0) < ADMIN_LOGIN_RATE_LIMIT_MAX) {
+    return { ok: true, key, retryAfterMs: 0 };
+  }
+
+  const retryAfterMs = Math.max(
+    0,
+    ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS - (nowMs - Number(entry.windowStartAt || nowMs))
+  );
+  return { ok: false, key, retryAfterMs };
+}
+
+/**
+ * 记录一次后台登录失败；成功登录会清理该来源的失败计数。
+ *
+ * @param {string} key
+ */
+function recordAdminLoginFailure(key) {
+  const nowMs = Date.now();
+  const entry = adminLoginRateLimit.get(key);
+  if (!entry || nowMs - Number(entry.windowStartAt || 0) >= ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS) {
+    adminLoginRateLimit.set(key, {
+      windowStartAt: nowMs,
+      count: 1
+    });
+    return;
+  }
+
+  adminLoginRateLimit.set(key, {
+    windowStartAt: Number(entry.windowStartAt || nowMs),
+    count: Number(entry.count || 0) + 1
+  });
+}
+
+// ---------- Web 后台 ----------
+const adminApi = express.Router();
+
+/**
+ * 后台登录：校验固定管理员账号，并创建 HttpOnly Cookie 会话。
+ */
+adminApi.post("/login", (req, res) => {
+  const username = String((req.body && req.body.username) || "").trim();
+  const password = String((req.body && req.body.password) || "");
+  const rateLimit = checkAdminLoginRateLimit(req);
+
+  if (!rateLimit.ok) {
+    routeLog(req, "warn", "admin.login.rate_limited", "后台登录失败：请求过于频繁", {
+      code: "RATE_LIMITED",
+      retryAfterMs: rateLimit.retryAfterMs
+    });
+    res.status(429).json({ ok: false, code: "RATE_LIMITED", message: "登录尝试过于频繁，请稍后重试" });
+    return;
+  }
+
+  if (!verifyAdminCredentials(username, password)) {
+    recordAdminLoginFailure(rateLimit.key);
+    routeLog(req, "warn", "admin.login.fail", "后台登录失败", {
+      code: "INVALID_CREDENTIALS"
+    });
+    res.status(401).json({ ok: false, code: "INVALID_CREDENTIALS", message: "用户名或密码错误" });
+    return;
+  }
+
+  const session = createAdminSession(res);
+  adminLoginRateLimit.delete(rateLimit.key);
+  routeLog(req, "info", "admin.login.ok", "后台登录成功", {});
+  return ok(res, {
+    username: session.username,
+    csrfToken: session.csrfToken,
+    expiresAt: session.expiresAt
+  });
+});
+
+adminApi.use(requireAdmin);
+adminApi.use(requireAdminCsrf);
+
+/**
+ * 后台会话状态：前端刷新后用它恢复 CSRF token。
+ */
+adminApi.get("/session", (req, res) => {
+  return ok(res, {
+    authenticated: true,
+    username: req.adminSession.username,
+    csrfToken: req.adminSession.csrfToken,
+    expiresAt: req.adminSession.expiresAt
+  });
+});
+
+/**
+ * 后台退出登录。
+ */
+adminApi.post("/logout", (req, res) => {
+  destroyAdminSession(req, res);
+  routeLog(req, "info", "admin.logout.ok", "后台退出登录", {});
+  return ok(res, {});
+});
+
+/**
+ * 后台用户分页查询。
+ */
+adminApi.get("/users", (req, res) => {
+  const page = store.listAdminUsers({
+    q: req.query && req.query.q,
+    page: req.query && req.query.page,
+    pageSize: req.query && req.query.pageSize
+  });
+  return ok(res, {
+    users: page.rows,
+    pagination: {
+      page: page.page,
+      pageSize: page.pageSize,
+      total: page.total,
+      totalPages: page.totalPages
+    }
+  });
+});
+
+/**
+ * 后台读取单个用户。
+ */
+adminApi.get("/users/:openId", (req, res) => {
+  const result = store.getAdminUser(req.params.openId);
+  if (!result.ok) return fail(res, result.code, result.message);
+  return ok(res, { user: result.user });
+});
+
+/**
+ * 后台创建用户档案。
+ */
+adminApi.post("/users", async (req, res) => {
+  const result = await store.createAdminUser(req.body || {});
+  if (!result.ok) {
+    routeLog(req, "warn", "admin.user.create.fail", "后台创建用户失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
+
+  routeLog(req, "info", "admin.user.create.ok", "后台创建用户成功", {
+    openId: result.user && result.user.openId
+  });
+  return ok(res, { user: result.user });
+});
+
+/**
+ * 后台更新用户档案。
+ */
+adminApi.put("/users/:openId", async (req, res) => {
+  const result = await store.updateAdminUser(req.params.openId, req.body || {});
+  if (!result.ok) {
+    routeLog(req, "warn", "admin.user.update.fail", "后台更新用户失败", {
+      code: String(result.code || ""),
+      openId: req.params.openId
+    });
+    return fail(res, result.code, result.message);
+  }
+
+  routeLog(req, "info", "admin.user.update.ok", "后台更新用户成功", {
+    openId: result.user && result.user.openId
+  });
+  return ok(res, { user: result.user });
+});
+
+/**
+ * 后台安全删除用户：不级联删除房间和历史数据。
+ */
+adminApi.delete("/users/:openId", async (req, res) => {
+  const result = await store.deleteAdminUser(req.params.openId);
+  if (!result.ok) {
+    routeLog(req, "warn", "admin.user.delete.fail", "后台删除用户失败", {
+      code: String(result.code || ""),
+      openId: req.params.openId
+    });
+    return fail(res, result.code, result.message);
+  }
+
+  routeLog(req, "info", "admin.user.delete.ok", "后台删除用户成功", {
+    openId: req.params.openId
+  });
+  return ok(res, {});
+});
+
+app.use("/admin/api", adminApi);
+app.get("/admin", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(WEB_ROOT, "index.html"));
+});
+app.use(
+  "/admin",
+  express.static(WEB_ROOT, {
+    setHeaders(res) {
+      res.setHeader("Cache-Control", "no-store");
+    }
+  })
+);
 
 /**
  * 上传头像：
@@ -1232,13 +1464,27 @@ server.on("upgrade", (req) => {
 const wss = new WebSocketServer({ server, path: "/ws" });
 const wsHub = createWsHub({ wss, store });
 
-server.listen(config.PORT, () => {
-  logger.info({
-    scope: "server",
-    event: "server.start",
-    msg: "poker-ledger-server 已启动",
-    extra: {
-      port: config.PORT
-    }
+initAdminPassword()
+  .then(() => {
+    server.listen(config.PORT, () => {
+      logger.info({
+        scope: "server",
+        event: "server.start",
+        msg: "poker-ledger-server 已启动",
+        extra: {
+          port: config.PORT
+        }
+      });
+    });
+  })
+  .catch((err) => {
+    logger.error({
+      scope: "server",
+      event: "server.admin_init_fail",
+      msg: "后台管理员初始化失败",
+      extra: {
+        errMsg: String((err && err.message) || err || "")
+      }
+    });
+    process.exit(1);
   });
-});

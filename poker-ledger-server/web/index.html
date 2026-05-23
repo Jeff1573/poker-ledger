@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Poker Ledger 后台</title>
+    <link rel="stylesheet" href="/admin/admin.css" />
+    <script defer src="/admin/admin.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-100 text-zinc-950 antialiased">
+    <main id="loginView" class="flex min-h-screen items-center justify-center px-4 py-10">
+      <section class="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+        <div class="mb-6">
+          <p class="text-sm font-medium text-zinc-500">Poker Ledger</p>
+          <h1 class="mt-1 text-2xl font-semibold">后台登录</h1>
+        </div>
+
+        <form id="loginForm" class="space-y-4">
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-zinc-700">用户名</span>
+            <input
+              id="loginUsername"
+              class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200"
+              autocomplete="username"
+              value="admin"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-zinc-700">密码</span>
+            <input
+              id="loginPassword"
+              class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200"
+              type="password"
+              autocomplete="current-password"
+            />
+          </label>
+
+          <p id="loginError" class="hidden rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"></p>
+
+          <button
+            id="loginSubmit"
+            class="w-full rounded-md bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            type="submit"
+          >
+            登录
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <main id="adminView" class="hidden min-h-screen">
+      <header class="border-b border-zinc-200 bg-white">
+        <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+          <div>
+            <p class="text-sm font-medium text-zinc-500">Poker Ledger</p>
+            <h1 class="text-xl font-semibold">用户管理</h1>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              id="refreshButton"
+              class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+            >
+              刷新
+            </button>
+            <button
+              id="logoutButton"
+              class="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+            >
+              退出
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section class="mx-auto max-w-6xl px-4 py-6">
+        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <form id="searchForm" class="flex w-full gap-2 sm:max-w-md">
+            <input
+              id="searchInput"
+              class="min-w-0 flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200"
+              placeholder="搜索 openId / 昵称"
+            />
+            <button
+              id="searchSubmit"
+              class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+            >
+              搜索
+            </button>
+          </form>
+
+          <button
+            id="createUserButton"
+            class="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+          >
+            新增用户
+          </button>
+        </div>
+
+        <div id="tableAlert" class="mb-4 hidden rounded-md px-3 py-2 text-sm"></div>
+
+        <div class="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-zinc-200 text-sm">
+              <thead class="bg-zinc-50 text-left text-xs font-semibold uppercase text-zinc-500">
+                <tr>
+                  <th class="px-4 py-3">用户</th>
+                  <th class="px-4 py-3">openId</th>
+                  <th class="px-4 py-3">当前房间</th>
+                  <th class="px-4 py-3">创建时间</th>
+                  <th class="px-4 py-3">更新时间</th>
+                  <th class="px-4 py-3 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody id="usersBody" class="divide-y divide-zinc-100"></tbody>
+            </table>
+          </div>
+
+          <div class="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p id="paginationInfo" class="text-sm text-zinc-600"></p>
+            <div class="flex gap-2">
+              <button
+                id="prevPageButton"
+                class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+              >
+                上一页
+              </button>
+              <button
+                id="nextPageButton"
+                class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="userModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 px-4 py-6">
+      <section class="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
+        <div class="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium text-zinc-500">用户档案</p>
+            <h2 id="modalTitle" class="text-lg font-semibold">新增用户</h2>
+          </div>
+          <button id="modalCloseButton" class="rounded-md px-2 py-1 text-sm text-zinc-500 hover:bg-zinc-100" type="button">
+            关闭
+          </button>
+        </div>
+
+        <form id="userForm" class="space-y-4">
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-zinc-700">openId</span>
+            <input
+              id="userOpenId"
+              class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200 disabled:bg-zinc-100"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-zinc-700">微信昵称</span>
+            <input
+              id="userNickName"
+              class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-zinc-700">展示昵称</span>
+            <input
+              id="userDisplayName"
+              class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200"
+            />
+          </label>
+
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-zinc-700">头像地址</span>
+            <input
+              id="userAvatarUrl"
+              class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-2 focus:ring-zinc-200"
+            />
+          </label>
+
+          <p id="modalError" class="hidden rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"></p>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button
+              id="modalCancelButton"
+              class="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              id="modalSubmitButton"
+              class="rounded-md bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+            >
+              保存
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </body>
+</html>

@@ -18,6 +18,10 @@ const LEADERBOARD_MAX_LIMIT = 200;
 const HISTORY_DEFAULT_LIMIT = 20;
 const HISTORY_MAX_LIMIT = 50;
 const LEADERBOARD_BACKFILL_META_KEY = "leaderboard_backfilled_v1";
+const ADMIN_USER_PAGE_DEFAULT_SIZE = 20;
+const ADMIN_USER_PAGE_MAX_SIZE = 100;
+const ADMIN_PASSWORD_SALT_META_KEY = "admin.password.salt";
+const ADMIN_PASSWORD_HASH_META_KEY = "admin.password.hash";
 
 const DATA_DIR = path.join(__dirname, "..", "data");
 ensureDir(DATA_DIR);
@@ -219,6 +223,62 @@ function normalizeHistoryLimit(limit) {
   const n = Number(limit || 0);
   if (!Number.isInteger(n) || n <= 0) return HISTORY_DEFAULT_LIMIT;
   return Math.min(HISTORY_MAX_LIMIT, n);
+}
+
+/**
+ * 归一化后台分页参数，避免后台一次性拉取过多用户。
+ *
+ * @param {any} page
+ * @param {any} pageSize
+ */
+function normalizeAdminUserPage(page, pageSize) {
+  const p = Number(page || 1);
+  const ps = Number(pageSize || ADMIN_USER_PAGE_DEFAULT_SIZE);
+  const safePage = Number.isInteger(p) && p > 0 ? p : 1;
+  const safePageSize = Number.isInteger(ps) && ps > 0
+    ? Math.min(ps, ADMIN_USER_PAGE_MAX_SIZE)
+    : ADMIN_USER_PAGE_DEFAULT_SIZE;
+  return {
+    page: safePage,
+    pageSize: safePageSize,
+    offset: (safePage - 1) * safePageSize
+  };
+}
+
+/**
+ * 后台用户字段统一归一化和校验。
+ *
+ * @param {any} payload
+ * @param {{ requireOpenId?: boolean }} options
+ */
+function normalizeAdminUserPayload(payload, options) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const opts = options || {};
+  const out = {};
+
+  if (opts.requireOpenId || Object.prototype.hasOwnProperty.call(source, "openId")) {
+    out.openId = String(source.openId || "").trim();
+    if (!out.openId) return fail("INVALID_OPENID", "openId 不能为空");
+    if (out.openId.length > 128) return fail("INVALID_OPENID", "openId 过长");
+  }
+
+  for (const key of ["nickNameWx", "avatarUrlWx", "displayName"]) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      out[key] = String(source[key] || "").trim();
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(out, "nickNameWx") && out.nickNameWx.length > 50) {
+    return fail("INVALID_NICKNAME", "微信昵称过长");
+  }
+  if (Object.prototype.hasOwnProperty.call(out, "avatarUrlWx") && out.avatarUrlWx.length > 1000) {
+    return fail("INVALID_AVATAR", "头像地址过长");
+  }
+  if (Object.prototype.hasOwnProperty.call(out, "displayName") && out.displayName.length > 20) {
+    return fail("INVALID_DISPLAY_NAME", "展示昵称过长");
+  }
+
+  return { ok: true, data: out };
 }
 
 /**
@@ -442,10 +502,32 @@ const stmt = {
   upsertMeta: db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)"),
 
   getUser: db.prepare("SELECT openId, nickNameWx, avatarUrlWx, displayName, createdAt, updatedAt FROM users WHERE openId = ?"),
+  getAdminUser: db.prepare(
+    "SELECT u.openId, u.nickNameWx, u.avatarUrlWx, u.displayName, u.createdAt, u.updatedAt, " +
+      "ur.roomCode AS currentRoomCode, ur.role AS currentRole, ur.joinedAt AS currentJoinedAt " +
+      "FROM users u LEFT JOIN user_room ur ON ur.openId = u.openId WHERE u.openId = ?"
+  ),
   insertUserIgnore: db.prepare(
     "INSERT OR IGNORE INTO users(openId, nickNameWx, avatarUrlWx, displayName, createdAt, updatedAt) VALUES (?, '', '', '', ?, ?)"
   ),
+  insertAdminUser: db.prepare(
+    "INSERT INTO users(openId, nickNameWx, avatarUrlWx, displayName, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)"
+  ),
+  updateAdminUser: db.prepare(
+    "UPDATE users SET nickNameWx = ?, avatarUrlWx = ?, displayName = ?, updatedAt = ? WHERE openId = ?"
+  ),
   deleteUser: db.prepare("DELETE FROM users WHERE openId = ?"),
+  countAdminUsers: db.prepare(
+    "SELECT COUNT(*) AS c FROM users u " +
+      "WHERE (? = '' OR u.openId LIKE ? OR u.nickNameWx LIKE ? OR u.displayName LIKE ?)"
+  ),
+  listAdminUsers: db.prepare(
+    "SELECT u.openId, u.nickNameWx, u.avatarUrlWx, u.displayName, u.createdAt, u.updatedAt, " +
+      "ur.roomCode AS currentRoomCode, ur.role AS currentRole, ur.joinedAt AS currentJoinedAt " +
+      "FROM users u LEFT JOIN user_room ur ON ur.openId = u.openId " +
+      "WHERE (? = '' OR u.openId LIKE ? OR u.nickNameWx LIKE ? OR u.displayName LIKE ?) " +
+      "ORDER BY u.updatedAt DESC, u.openId ASC LIMIT ? OFFSET ?"
+  ),
 
   getUserRoom: db.prepare("SELECT openId, roomCode, role, joinedAt FROM user_room WHERE openId = ?"),
   insertUserRoom: db.prepare("INSERT OR REPLACE INTO user_room(openId, roomCode, role, joinedAt) VALUES (?, ?, ?, ?)"),
@@ -583,6 +665,30 @@ const stmt = {
  */
 function getUser(openId) {
   return rowToUser(stmt.getUser.get(String(openId || "")));
+}
+
+/**
+ * 后台用户行转为管理端展示结构。
+ *
+ * @param {any} r
+ */
+function rowToAdminUser(r) {
+  if (!r) return null;
+  return {
+    openId: String(r.openId || ""),
+    nickNameWx: String(r.nickNameWx || ""),
+    avatarUrlWx: String(r.avatarUrlWx || ""),
+    displayName: String(r.displayName || ""),
+    createdAt: Number(r.createdAt || 0),
+    updatedAt: Number(r.updatedAt || 0),
+    currentRoom: r.currentRoomCode
+      ? {
+          roomCode: normalizeRoomCode(r.currentRoomCode),
+          role: String(r.currentRole || ""),
+          joinedAt: Number(r.currentJoinedAt || 0)
+        }
+      : null
+  };
 }
 
 /**
@@ -878,6 +984,173 @@ function updateUserProfile(openId, payload) {
       return { ok: true, user: getUser(oid) };
     });
 
+    return tx();
+  });
+}
+
+/**
+ * 读取后台管理员密码摘要配置。
+ */
+function getAdminPasswordRecord() {
+  const salt = stmt.getMeta.get(ADMIN_PASSWORD_SALT_META_KEY);
+  const hash = stmt.getMeta.get(ADMIN_PASSWORD_HASH_META_KEY);
+  return {
+    salt: salt ? String(salt.value || "") : "",
+    hash: hash ? String(hash.value || "") : ""
+  };
+}
+
+/**
+ * 保存后台管理员密码摘要。
+ *
+ * @param {string} salt
+ * @param {string} hash
+ */
+function saveAdminPasswordRecord(salt, hash) {
+  return safeWrite(() => {
+    const nextSalt = String(salt || "").trim();
+    const nextHash = String(hash || "").trim();
+    if (!nextSalt || !nextHash) return fail("INVALID_ADMIN_PASSWORD", "管理员密码摘要无效");
+
+    const tx = db.transaction(() => {
+      stmt.upsertMeta.run(ADMIN_PASSWORD_SALT_META_KEY, nextSalt);
+      stmt.upsertMeta.run(ADMIN_PASSWORD_HASH_META_KEY, nextHash);
+      return { ok: true };
+    });
+    return tx();
+  });
+}
+
+/**
+ * 后台分页查询用户。
+ *
+ * @param {{ q?: any, page?: any, pageSize?: any }} query
+ */
+function listAdminUsers(query) {
+  const q = String((query && query.q) || "").trim();
+  const { page, pageSize, offset } = normalizeAdminUserPage(query && query.page, query && query.pageSize);
+  const like = `%${q}%`;
+  const total = Number((stmt.countAdminUsers.get(q, like, like, like) || {}).c || 0);
+  const rows = stmt.listAdminUsers.all(q, like, like, like, pageSize, offset).map(rowToAdminUser);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return {
+    page,
+    pageSize,
+    total,
+    totalPages,
+    rows
+  };
+}
+
+/**
+ * 后台读取单个用户详情。
+ *
+ * @param {string} openId
+ */
+function getAdminUser(openId) {
+  const oid = String(openId || "").trim();
+  if (!oid) return fail("INVALID_OPENID", "openId 不能为空");
+
+  const user = rowToAdminUser(stmt.getAdminUser.get(oid));
+  if (!user) return fail("NOT_FOUND", "用户不存在");
+  return { ok: true, user };
+}
+
+/**
+ * 后台创建用户档案，不创建房间关系。
+ *
+ * @param {{openId:string,nickNameWx?:string,avatarUrlWx?:string,displayName?:string}} payload
+ */
+function createAdminUser(payload) {
+  return safeWrite(() => {
+    const normalized = normalizeAdminUserPayload(payload, { requireOpenId: true });
+    if (!normalized.ok) return normalized;
+
+    const data = normalized.data;
+    const tx = db.transaction(() => {
+      const existed = stmt.getUser.get(data.openId);
+      if (existed) return fail("USER_EXISTS", "用户已存在");
+
+      const now = Date.now();
+      stmt.insertAdminUser.run(
+        data.openId,
+        String(data.nickNameWx || ""),
+        String(data.avatarUrlWx || ""),
+        String(data.displayName || ""),
+        now,
+        now
+      );
+      return { ok: true, user: rowToAdminUser(stmt.getAdminUser.get(data.openId)) };
+    });
+    return tx();
+  });
+}
+
+/**
+ * 后台更新用户档案；若用户正在房间内，同步当前房间成员资料。
+ *
+ * @param {string} openId
+ * @param {{nickNameWx?:string,avatarUrlWx?:string,displayName?:string}} payload
+ */
+function updateAdminUser(openId, payload) {
+  return safeWrite(() => {
+    const oid = String(openId || "").trim();
+    if (!oid) return fail("INVALID_OPENID", "openId 不能为空");
+
+    const normalized = normalizeAdminUserPayload(payload, {});
+    if (!normalized.ok) return normalized;
+
+    const data = normalized.data;
+    const tx = db.transaction(() => {
+      const current = stmt.getUser.get(oid);
+      if (!current) return fail("NOT_FOUND", "用户不存在");
+
+      const next = {
+        nickNameWx: Object.prototype.hasOwnProperty.call(data, "nickNameWx")
+          ? data.nickNameWx
+          : String(current.nickNameWx || ""),
+        avatarUrlWx: Object.prototype.hasOwnProperty.call(data, "avatarUrlWx")
+          ? data.avatarUrlWx
+          : String(current.avatarUrlWx || ""),
+        displayName: Object.prototype.hasOwnProperty.call(data, "displayName")
+          ? data.displayName
+          : String(current.displayName || "")
+      };
+      const now = Date.now();
+      stmt.updateAdminUser.run(next.nickNameWx, next.avatarUrlWx, next.displayName, now, oid);
+
+      const mapping = getUserRoom(oid);
+      if (mapping && mapping.roomCode) {
+        stmt.updateRoomMemberProfile.run(next.displayName, next.avatarUrlWx, now, mapping.roomCode, oid);
+      }
+
+      return { ok: true, user: rowToAdminUser(stmt.getAdminUser.get(oid)) };
+    });
+    return tx();
+  });
+}
+
+/**
+ * 后台安全删除用户：只删 users 档案，房间内用户必须先退出房间。
+ *
+ * @param {string} openId
+ */
+function deleteAdminUser(openId) {
+  return safeWrite(() => {
+    const oid = String(openId || "").trim();
+    if (!oid) return fail("INVALID_OPENID", "openId 不能为空");
+
+    const tx = db.transaction(() => {
+      const current = stmt.getUser.get(oid);
+      if (!current) return fail("NOT_FOUND", "用户不存在");
+
+      const mapping = getUserRoom(oid);
+      if (mapping) return fail("IN_ROOM", "用户仍在房间中，不能直接删除");
+
+      stmt.deleteUser.run(oid);
+      return { ok: true };
+    });
     return tx();
   });
 }
@@ -1395,11 +1668,18 @@ module.exports = {
   getMySettlement,
   getLeaderboard,
   getMe,
+  getAdminPasswordRecord,
+  listAdminUsers,
+  getAdminUser,
 
   // 写方法（带锁 + 事务）
+  saveAdminPasswordRecord,
   ensureUserForLogin,
   deactivateUser,
   updateUserProfile,
+  createAdminUser,
+  updateAdminUser,
+  deleteAdminUser,
   createRoom,
   joinRoom,
   leaveRoom,

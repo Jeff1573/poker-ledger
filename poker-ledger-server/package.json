@@ -7,7 +7,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node src/index.js"
+    "dev": "node src/index.js",
+    "build:web": "tailwindcss -i ./web/input.css -o ./web/admin.css --minify"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
@@ -17,5 +18,9 @@
     "multer": "^1.4.5-lts.1",
     "qrcode": "^1.5.4",
     "ws": "^8.17.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.0",
+    "tailwindcss": "^4.3.0"
   }
 }

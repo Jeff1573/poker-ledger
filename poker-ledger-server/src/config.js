@@ -53,5 +53,8 @@ module.exports = {
   ROOM_IMAGE_RATE_LIMIT_WINDOW_MS: toPositiveInt(process.env.ROOM_IMAGE_RATE_LIMIT_WINDOW_MS, 60000),
 
   // 房间邀请码签发接口限流上限（每窗口）
-  ROOM_IMAGE_RATE_LIMIT_MAX: toPositiveInt(process.env.ROOM_IMAGE_RATE_LIMIT_MAX, 30)
+  ROOM_IMAGE_RATE_LIMIT_MAX: toPositiveInt(process.env.ROOM_IMAGE_RATE_LIMIT_MAX, 30),
+
+  // 后台 Cookie 是否启用 Secure（HTTPS 生产环境建议设置为 1）
+  ADMIN_COOKIE_SECURE: String(process.env.ADMIN_COOKIE_SECURE || "0") === "1"
 };
