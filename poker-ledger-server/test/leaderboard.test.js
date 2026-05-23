@@ -278,10 +278,10 @@ test("胜率计算正确（平局不计分母）", () => {
   assert.equal(h.winRate, 0);
 });
 
-test("排序规则正确：胜率 > 净分 > 场次 > openId", () => {
+test("排序规则正确：净赢钱金额 > openId", () => {
   const board = store.getLeaderboard(200);
   const order = board.rows.map((x) => x.openId);
-  assert.deepEqual(order, [PLAYER_B, PLAYER_A, PLAYER_H, PLAYER_I, PLAYER_C]);
+  assert.deepEqual(order, [PLAYER_B, PLAYER_H, PLAYER_I, PLAYER_C, PLAYER_A]);
 });
 
 test("limit 生效且返回 totalPlayers", () => {

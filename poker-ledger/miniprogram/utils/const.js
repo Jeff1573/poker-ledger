@@ -26,8 +26,8 @@ function resolveEnvVersion() {
 const ENDPOINTS_BY_ENV = {
   develop: {
     // 真机调试请改为你电脑在局域网中的可达地址，不要使用 127.0.0.1
-    API_BASE_URL: "https://dev.20260326.xyz",
-    WS_BASE_URL: "wss://dev.20260326.xyz"
+    API_BASE_URL: "https://jp.20260326.xyz",
+    WS_BASE_URL: "wss://jp.20260326.xyz"
   },
   trial: {
     API_BASE_URL: "https://dev.20260326.xyz",

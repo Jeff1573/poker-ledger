@@ -1309,10 +1309,8 @@ function getMySettlement(openId, settlementId) {
  * 获取全局排行榜。
  *
  * 排序规则：
- * 1) 胜率降序（平局不计分母）
- * 2) 净输赢降序
- * 3) 总场次降序
- * 4) openId 升序（稳定排序）
+ * 1) 净输赢降序，累计赢钱越多越靠前
+ * 2) openId 升序（稳定排序）
  *
  * @param {number} limit
  * @returns {{totalPlayers:number, rows:any[]}}
@@ -1342,11 +1340,7 @@ function getLeaderboard(limit) {
   });
 
   allRows.sort((a, b) => {
-    const rateDiff = b.winRate - a.winRate;
-    if (Math.abs(rateDiff) > 1e-12) return rateDiff > 0 ? 1 : -1;
-
     if (b.netProfit !== a.netProfit) return b.netProfit - a.netProfit;
-    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
     return String(a.openId || "").localeCompare(String(b.openId || ""));
   });
 
