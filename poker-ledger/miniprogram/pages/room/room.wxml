@@ -101,6 +101,7 @@
           wx:key="openId"
           class="member-item {{item.role === 'owner' ? 'owner' : ''}} {{!item.active ? 'inactive' : ''}}"
           bindtap="handleTapMember"
+          bindlongpress="handleLongPressMember"
           data-openid="{{item.openId}}"
         >
           <image class="member-avatar" src="{{item.avatarUrlResolved}}" mode="aspectFill" />

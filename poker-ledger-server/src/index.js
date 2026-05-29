@@ -983,6 +983,30 @@ app.post("/api/rooms/leave", authMiddleware, async (req, res) => {
 });
 
 /**
+ * 房主移出普通成员。
+ */
+app.post("/api/rooms/kick", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+  const targetOpenId = String((req.body && req.body.targetOpenId) || "").trim();
+
+  const result = await store.kickMember(openId, targetOpenId);
+
+  if (!result.ok) {
+    routeLog(req, "warn", "room.kick.fail", "移出成员失败", {
+      code: String(result.code || "")
+    });
+    return fail(res, result.code, result.message);
+  }
+
+  wsHub.disconnectOpenId(result.targetOpenId || targetOpenId, "FORBIDDEN", "你已被房主移出房间");
+  wsHub.broadcastSnapshot(result.roomCode);
+  routeLog(req, "info", "room.kick.ok", "移出成员成功", {
+    roomCode: result.roomCode
+  });
+  return ok(res, {});
+});
+
+/**
  * 新增交易（转账）。
  */
 app.post("/api/txs", authMiddleware, async (req, res) => {

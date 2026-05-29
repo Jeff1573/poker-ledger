@@ -1283,6 +1283,55 @@ function leaveRoom(openId) {
 }
 
 /**
+ * 房主移出普通成员。
+ *
+ * 踢人复用“成员退出”的 inactive 模型：保留历史交易和总账，
+ * 只移除当前房间映射，确保后续结算仍能包含该成员快照。
+ *
+ * @param {string} ownerOpenId
+ * @param {string} targetOpenId
+ */
+function kickMember(ownerOpenId, targetOpenId) {
+  return safeWrite(() => {
+    const ownerOid = String(ownerOpenId || "").trim();
+    const targetOid = String(targetOpenId || "").trim();
+
+    if (!targetOid || targetOid === ownerOid) return fail("INVALID_MEMBER", "请选择要移出的成员");
+
+    const tx = db.transaction(() => {
+      const mapping = getUserRoom(ownerOid);
+      if (!mapping) return fail("NOT_IN_ROOM", "你不在房间中");
+      if (mapping.role !== "owner") return fail("FORBIDDEN", "仅房主可移出成员");
+
+      const rc = normalizeRoomCode(mapping.roomCode);
+      const room = stmt.getRoom.get(rc);
+      if (!room) return fail("ROOM_NOT_FOUND", "房间不存在");
+      if (String(room.status || "") !== "active") return fail("ROOM_NOT_ACTIVE", "房间不可操作（可能已解散）");
+
+      const targetMapping = getUserRoom(targetOid);
+      const targetMappedRoomCode = normalizeRoomCode(targetMapping && targetMapping.roomCode);
+      if (!targetMapping || targetMappedRoomCode !== rc) return fail("TARGET_NOT_IN_ROOM", "成员不在当前房间中");
+
+      const targetMember = stmt.getRoomMember.get(rc, targetOid);
+      if (!targetMember || !targetMember.active) return fail("TARGET_NOT_IN_ROOM", "成员不在当前房间中");
+      if (String(targetMember.role || "") !== "member") return fail("INVALID_MEMBER", "只能移出普通成员");
+
+      const now = Date.now();
+      stmt.deleteUserRoomByOpenId.run(targetOid);
+      stmt.setRoomMemberInactive.run(now, rc, targetOid);
+
+      const c = stmt.countActiveMembers.get(rc);
+      const memberCount = Number(c && c.c) || 0;
+      stmt.updateRoomMemberCount.run(memberCount, now, rc);
+
+      return { ok: true, roomCode: rc, targetOpenId: targetOid };
+    });
+
+    return tx();
+  });
+}
+
+/**
  * 新增交易（转账）。
  *
  * @param {string} fromOpenId
@@ -1686,6 +1735,7 @@ module.exports = {
   createRoom,
   joinRoom,
   leaveRoom,
+  kickMember,
   addTx,
   dissolveRoom,
 

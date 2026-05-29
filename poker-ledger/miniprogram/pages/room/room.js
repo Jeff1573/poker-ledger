@@ -193,7 +193,7 @@ function buildSnapshotFingerprint(snap) {
  * - 展示成员横向滑动（房主固定第一个）
  * - 展示总账净输赢
  * - 新增交易（我转给谁多少钱，整数）
- * - 成员退出 / 房主解散
+ * - 成员退出 / 房主踢人 / 房主解散
  */
 Page({
   data: {
@@ -203,6 +203,7 @@ Page({
     isTransferSubmitting: false,
     isJoinCodeLoading: false,
     isLeaving: false,
+    isKickingMember: false,
     isDissolving: false,
 
     roomCode: "",
@@ -309,6 +310,7 @@ Page({
       isTransferSubmitting: false,
       isJoinCodeLoading: false,
       isLeaving: false,
+      isKickingMember: false,
       isDissolving: false,
       viewState,
       roomCode: "",
@@ -1139,6 +1141,10 @@ Page({
    */
   handleTapMember(e) {
     if (this.data.viewState !== "in_room") return;
+    if (this._skipNextMemberTap) {
+      this._skipNextMemberTap = false;
+      return;
+    }
 
     const openId = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.openid) || "").trim();
     if (!openId) return;
@@ -1159,6 +1165,60 @@ Page({
       transferAmountText: "",
       transferCanSubmit: false
     });
+  },
+
+  /**
+   * 房主长按普通成员头像：二次确认后移出房间。
+   */
+  async handleLongPressMember(e) {
+    if (this.data.viewState !== "in_room") return;
+    if (this.data.role !== "owner") return;
+    if (this.data.isKickingMember) return;
+
+    const openId = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.openid) || "").trim();
+    if (!openId || openId === this.data.meOpenId) return;
+
+    const member = (this.data.members || []).find((m) => m && m.openId === openId);
+    if (!member || !member.active || member.role === "owner") return;
+
+    // 长按属于管理操作，短时间内吞掉随后可能到来的 tap，避免同时打开转账弹层。
+    this._skipNextMemberTap = true;
+    setTimeout(() => {
+      this._skipNextMemberTap = false;
+    }, 400);
+
+    const name = String(member.displayName || "成员");
+    const confirm = await new Promise((resolve) => {
+      wx.showModal({
+        title: "移出成员",
+        content: `确定将「${name}」移出房间吗？对方可重新通过邀请码加入。`,
+        confirmText: "移出",
+        confirmColor: "#FF3B30",
+        success: (res) => resolve(!!res.confirm),
+        fail: () => resolve(false)
+      });
+    });
+    if (!confirm) return;
+
+    this.setData({ isKickingMember: true });
+    try {
+      const app = getApp();
+      const r = await app.apiCall({
+        path: "/api/rooms/kick",
+        method: "POST",
+        data: { targetOpenId: openId }
+      });
+      if (!r || !r.ok) {
+        this.toast((r && r.message) || "移出失败");
+        return;
+      }
+      this.toast("已移出成员");
+    } catch (err) {
+      console.error("room_kick 失败", err);
+      this.toast("移出失败，请稍后重试");
+    } finally {
+      this.setData({ isKickingMember: false });
+    }
   },
 
   /**
