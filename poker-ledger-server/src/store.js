@@ -639,6 +639,7 @@ const stmt = {
   ),
 
   clearLeaderboardStats: db.prepare("DELETE FROM leaderboard_stats"),
+  deleteLeaderboardStats: db.prepare("DELETE FROM leaderboard_stats WHERE openId = ?"),
   upsertLeaderboardStats: db.prepare(
     "INSERT INTO leaderboard_stats(openId, displayName, avatarUrl, winCount, lossCount, drawCount, matchCount, netProfit, lastSettlementAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(openId) DO UPDATE SET " +
@@ -1148,6 +1149,8 @@ function deleteAdminUser(openId) {
       const mapping = getUserRoom(oid);
       if (mapping) return fail("IN_ROOM", "用户仍在房间中，不能直接删除");
 
+      // 管理端删除的是用户档案，排行榜属于派生聚合数据，需要同步移除避免前端继续展示。
+      stmt.deleteLeaderboardStats.run(oid);
       stmt.deleteUser.run(oid);
       return { ok: true };
     });

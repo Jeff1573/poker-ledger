@@ -23,6 +23,7 @@ const {
 
 const OWNER_OPEN_ID = "admin_owner_openid";
 const DELETE_OPEN_ID = "admin_delete_openid";
+const DELETE_PARTNER_OPEN_ID = "admin_delete_partner_openid";
 
 let adminPassword = "";
 let child = null;
@@ -181,6 +182,23 @@ test.before(async () => {
   });
   assert.equal(deletable.ok, true);
 
+  const deletePartner = await store.createAdminUser({
+    openId: DELETE_PARTNER_OPEN_ID,
+    nickNameWx: "陪测",
+    avatarUrlWx: "/uploads/delete-partner.png",
+    displayName: "陪测"
+  });
+  assert.equal(deletePartner.ok, true);
+
+  const deletableRoom = await store.createRoom(DELETE_OPEN_ID);
+  assert.equal(deletableRoom.ok, true);
+  const joinPartner = await store.joinRoom(DELETE_PARTNER_OPEN_ID, deletableRoom.roomCode);
+  assert.equal(joinPartner.ok, true);
+  const tx = await store.addTx(DELETE_PARTNER_OPEN_ID, DELETE_OPEN_ID, 10, "删除前排行数据");
+  assert.equal(tx.ok, true);
+  const dissolved = await store.dissolveRoom(DELETE_OPEN_ID);
+  assert.equal(dissolved.ok, true);
+
   const room = await store.createRoom(OWNER_OPEN_ID);
   assert.equal(room.ok, true);
 
@@ -298,6 +316,22 @@ test("后台 API：认证、CSRF 与用户 CRUD", async () => {
     });
     assert.equal(res.status, 200);
     assert.equal(res.data.ok, true);
+  }
+
+  {
+    const beforeBoard = store.getLeaderboard(200);
+    assert.ok(beforeBoard.rows.some((row) => row.openId === DELETE_OPEN_ID));
+
+    const res = await requestAdmin(`/admin/api/users/${DELETE_OPEN_ID}`, {
+      method: "DELETE",
+      cookie,
+      csrfToken
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.data.ok, true);
+
+    const afterBoard = store.getLeaderboard(200);
+    assert.equal(afterBoard.rows.some((row) => row.openId === DELETE_OPEN_ID), false);
   }
 
   {
