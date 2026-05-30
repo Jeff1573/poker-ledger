@@ -99,7 +99,7 @@
         <view
           wx:for="{{members}}"
           wx:key="openId"
-          class="member-item {{item.role === 'owner' ? 'owner' : ''}} {{!item.active ? 'inactive' : ''}}"
+          class="member-item {{item.role === 'owner' ? 'owner' : ''}}"
           bindtap="handleTapMember"
           bindlongpress="handleLongPressMember"
           data-openid="{{item.openId}}"
@@ -110,7 +110,6 @@
             {{item.amountText || '0'}}
           </view>
           <view wx:if="{{item.role === 'owner'}}" class="badge">房主</view>
-          <view wx:if="{{!item.active}}" class="badge badge-gray">已退出</view>
         </view>
         <view wx:if="{{members.length === 0}}" class="subtle room-placeholder">授权并加入房间后显示成员列表</view>
       </view>

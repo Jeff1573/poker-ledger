@@ -66,11 +66,13 @@ function findMember(members, openId) {
 test("房主可以踢普通成员，被踢成员无法继续记账且允许重新加入", async () => {
   const owner = "kick_owner_ok";
   const member = "kick_member_ok";
+  const memberB = "kick_member_ok_b";
 
   await ensureProfile(owner, "房主甲");
   await ensureProfile(member, "成员甲");
+  await ensureProfile(memberB, "成员乙");
 
-  const roomCode = await createRoomWithMembers(owner, [member]);
+  const roomCode = await createRoomWithMembers(owner, [member, memberB]);
   const tx = await store.addTx(owner, member, 50, "");
   assert.equal(tx.ok, true);
 
@@ -81,25 +83,29 @@ test("房主可以踢普通成员，被踢成员无法继续记账且允许重�
   assert.equal(store.getUserRoom(member), null);
 
   const snap = store.getRoomSnapshot(roomCode);
-  assert.equal(snap.room.memberCount, 1);
+  assert.equal(snap.room.memberCount, 2);
   assert.equal(snap.room.totals[owner], -50);
   assert.equal(snap.room.totals[member], 50);
 
   const memberRow = findMember(snap.members, member);
-  assert.ok(memberRow);
-  assert.equal(memberRow.active, false);
+  assert.equal(memberRow, null);
 
   const afterKickTx = await store.addTx(member, owner, 1, "");
   assert.equal(afterKickTx.ok, false);
   assert.equal(afterKickTx.code, "NOT_IN_ROOM");
 
+  await new Promise((resolve) => setTimeout(resolve, 2));
   const rejoin = await store.joinRoom(member, roomCode);
   assert.equal(rejoin.ok, true);
 
   const snapAfterRejoin = store.getRoomSnapshot(roomCode);
   const rejoinedMember = findMember(snapAfterRejoin.members, member);
-  assert.equal(snapAfterRejoin.room.memberCount, 2);
+  assert.equal(snapAfterRejoin.room.memberCount, 3);
   assert.equal(rejoinedMember.active, true);
+  assert.deepEqual(
+    snapAfterRejoin.members.map((m) => m.openId),
+    [owner, memberB, member]
+  );
 });
 
 test("非房主不能踢人", async () => {

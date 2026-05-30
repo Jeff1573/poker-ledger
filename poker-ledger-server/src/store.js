@@ -550,6 +550,9 @@ const stmt = {
   listRoomMembers: db.prepare(
     "SELECT roomCode, openId, role, displayName, avatarUrl, joinedAt, active, updatedAt FROM room_members WHERE roomCode = ?"
   ),
+  listActiveRoomMembers: db.prepare(
+    "SELECT roomCode, openId, role, displayName, avatarUrl, joinedAt, active, updatedAt FROM room_members WHERE roomCode = ? AND active = 1"
+  ),
   upsertRoomMember: db.prepare(
     "INSERT OR REPLACE INTO room_members(roomCode, openId, role, displayName, avatarUrl, joinedAt, active, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ),
@@ -761,7 +764,7 @@ function getRoomSnapshot(roomCode) {
     lastTxAt: Number(roomRow.lastTxAt || 0)
   };
 
-  const members = stmt.listRoomMembers.all(rc).map((m) => ({
+  const members = stmt.listActiveRoomMembers.all(rc).map((m) => ({
     openId: String(m.openId || ""),
     role: String(m.role || ""),
     displayName: String(m.displayName || ""),
@@ -1229,7 +1232,7 @@ function joinRoom(openId, roomCode) {
       const now = Date.now();
       const existedMember = stmt.getRoomMember.get(rc, oid);
       const wasActive = !!(existedMember && existedMember.active);
-      const joinedAt = existedMember ? Number(existedMember.joinedAt || 0) : now;
+      const joinedAt = wasActive && existedMember ? Number(existedMember.joinedAt || now) : now;
 
       stmt.insertUserRoom.run(oid, rc, "member", now);
       stmt.upsertRoomMember.run(rc, oid, "member", user.displayName, user.avatarUrlWx, joinedAt, 1, now);

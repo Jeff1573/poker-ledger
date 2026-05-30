@@ -613,10 +613,12 @@ Page({
    */
   applySnapshot(snap) {
     // 成员：补全头像 URL，确保 chooseAvatar 上传后的相对路径也能展示
-    const members = (snap.members || []).map((m) => ({
-      ...m,
-      avatarUrlResolved: resolveApiAssetUrl(m && m.avatarUrl)
-    }));
+    const members = (snap.members || [])
+      .filter((m) => m && m.active !== false)
+      .map((m) => ({
+        ...m,
+        avatarUrlResolved: resolveApiAssetUrl(m && m.avatarUrl)
+      }));
 
     // 交易：快照只保证“最新窗口”，与本地已加载历史做合并去重。
     const snapshotTxs = (snap.txs || []).map((t) => normalizeTxForView(t)).filter((t) => !!t);
