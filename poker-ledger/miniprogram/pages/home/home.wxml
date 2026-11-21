@@ -1,201 +1,166 @@
-<view class="container home-page {{hasProfile ? 'home-auth' : 'home-guest'}}">
-  <!-- 顶部视觉区：使用纯 WXSS 构建通用牌桌主题，不引入图片资源 -->
-  <view class="hero-shell">
-    <view class="hero-deco hero-glow-a"></view>
-    <view class="hero-deco hero-glow-b"></view>
+<view class="container home-page">
+  <!-- 顶部：一句话说明 + 环境标识（一眼看出连的是哪个后端） -->
+  <view class="hero">
+    <view class="hero-glow"></view>
 
     <view class="row-between hero-head">
-      <view>
+      <view class="hero-title-wrap">
         <view class="hero-title">打牌记账</view>
-        <view class="hero-subtle">创建房间快速记账，输入房间号或扫码加入</view>
-        <view wx:if="{{miniVersionText}}" class="hero-version">{{miniVersionText}}</view>
+        <view class="hero-sub">开房记账，扫码或输房间号即可加入</view>
       </view>
 
-      <view class="hero-actions">
-        <button class="btn-plain hero-action-btn" size="mini" bindtap="goLeaderboard">总排行榜</button>
-        <button class="btn-plain hero-action-btn" size="mini" bindtap="goTimeline">历史记录</button>
+      <view class="env-pill env-pill--{{envTone}} home-env">
+        <view class="env-dot"></view>
+        <text class="env-text">{{envLabel}}</text>
       </view>
     </view>
 
-    <!-- 通用牌桌元素：筹码 + 麻将 + 记分线 -->
-    <view class="table-mix">
-      <view class="chip-group">
-        <view class="chip chip-high">100</view>
-        <view class="chip chip-mid">50</view>
-        <view class="chip chip-low">10</view>
-      </view>
-
-      <view class="suit-group">
-        <view class="suit suit-mahjong suit-mahjong-blue">白</view>
-        <view class="suit suit-mahjong suit-mahjong-green">发</view>
-        <view class="suit suit-mahjong suit-mahjong-red">中</view>
-      </view>
-
-      <view class="score-track">
-        <view class="score-label">今日运势</view>
-        <view class="track-line">
-          <view class="track-seg seg-a"></view>
-          <view class="track-seg seg-b"></view>
-          <view class="track-seg seg-c"></view>
-        </view>
-        <view class="score-end">吉</view>
-      </view>
-    </view>
+    <view class="hero-env-detail">{{envDetail}}</view>
   </view>
 
-  <view class="auth-stage">
-    <!-- 授权卡片：保持自然流式间距，不做居中悬浮 -->
-    <view class="card profile-card auth-card">
-      <view wx:if="{{hasProfile}}">
-        <view class="title">欢迎回来</view>
-        <view class="subtle" style="margin-top: 10rpx;">默认微信头像昵称，可在“资料”里改昵称</view>
+  <!-- ① 身份区：未设置资料时，头像与昵称在同一步完成 -->
+  <view class="card identity-card">
+    <block wx:if="{{hasProfile}}">
+      <view class="identity-row">
+        <user-avatar class="identity-avatar" src="{{userAvatarUrl}}" name="{{user.displayName}}" size="{{104}}" />
 
-        <view class="row profile-row" style="margin-top: 20rpx;">
-          <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
-          <view style="margin-left: 18rpx;">
-            <view class="name">{{user.displayName}}</view>
-            <view class="subtle">已可创建房间或加入房间</view>
-          </view>
+        <view class="identity-main">
+          <view class="identity-name">{{user.displayName}}</view>
         </view>
       </view>
+    </block>
 
-      <view wx:else>
-        <view class="title">请先授权登录</view>
-        <view class="subtle" style="margin-top: 10rpx;">
-          完成头像昵称后即可创建房间、加入房间和扫码记账。
-        </view>
-        <button class="btn-primary auth-single-btn" bindtap="handleOpenProfileModal" disabled="{{loading}}">
-          授权登录
+    <block wx:else>
+      <view class="identity-title">设置头像和昵称</view>
+      <view class="identity-hint">只设置一次，用于房间里区分是谁的账</view>
+
+      <view class="setup-row">
+        <!-- 头像按钮直接触发微信头像选择，不再经过中间弹窗 -->
+        <button
+          class="avatar-trigger"
+          open-type="chooseAvatar"
+          bindchooseavatar="handleChooseAvatar"
+          disabled="{{loading}}"
+        >
+          <user-avatar src="{{draftAvatarLocal}}" name="{{draftDisplayName}}" size="{{112}}" bordered="{{true}}" />
+          <view class="avatar-trigger-text">{{draftAvatarPath ? '已选好' : (avatarUploading ? '上传中' : '选头像')}}</view>
         </button>
+
+        <view class="setup-fields">
+          <input
+            class="input setup-input"
+            type="nickname"
+            placeholder="输入昵称"
+            value="{{draftDisplayName}}"
+            bindinput="handleNicknameInput"
+            maxlength="20"
+            disabled="{{loading}}"
+          />
+          <view class="setup-tip">昵称可直接用默认值，也能改成自己的</view>
+        </view>
       </view>
-    </view>
+
+      <!-- supportChooseAvatar 为 false 时走老版本基础库的兜底授权 -->
+      <button
+        wx:if="{{supportChooseAvatar}}"
+        class="btn-primary setup-save"
+        bindtap="handleSaveProfile"
+        disabled="{{!canSaveProfile || loading}}"
+      >
+        完成
+      </button>
+      <button
+        wx:else
+        class="btn-primary setup-save"
+        bindtap="handleAuthLegacy"
+        disabled="{{loading}}"
+      >
+        使用微信授权获取
+      </button>
+    </block>
   </view>
 
-  <!-- 当前房间状态：首次进入且已在房间会自动跳转；手动切回首页后由用户继续房间 -->
-  <view wx:if="{{inRoom}}" class="card active-room-card">
-    <view class="title">当前房间 {{activeRoomCode}}</view>
-    <view wx:if="{{activeRoomIsOwner}}" class="subtle active-room-subtle">
-      你是房主，请前往房间页继续记账或解散房间。
-    </view>
-    <view wx:else class="subtle active-room-subtle">
-      你已在房间中，可继续记账，或先退出再加入其他房间。
+  <!-- ② 房间区：已在房间时只给「回到房间」；不在房间时给「创建 / 加入」 -->
+  <view wx:if="{{inRoom}}" class="card room-active">
+    <view class="room-active-head">
+      <view>
+        <view class="room-active-label">当前房间</view>
+        <view class="room-active-code">{{activeRoomCode}}</view>
+      </view>
+      <view class="role-pill">{{activeRoomIsOwner ? '房主' : '成员'}}</view>
     </view>
 
-    <view class="row active-room-actions">
-      <button class="btn-primary" style="flex: 1;" bindtap="handleContinueRoom" disabled="{{loading}}">
-        进入房间
+    <view class="room-active-hint">
+      {{activeRoomIsOwner ? '你是房主，回房间继续记账或解散房间' : '已在房间中，回房间继续记账；换房需先退出'}}
+    </view>
+
+    <view class="room-active-actions">
+      <button class="btn-primary room-active-main" bindtap="handleContinueRoom" disabled="{{loading}}">
+        回到房间
       </button>
       <button
         wx:if="{{!activeRoomIsOwner}}"
-        class="btn-plain active-room-side-btn"
+        class="btn-plain room-active-side"
         bindtap="handleLeaveCurrentRoom"
         disabled="{{loading}}"
       >
         退出房间
       </button>
-      <!-- <button
-        wx:else
-        class="btn-plain active-room-side-btn"
-        bindtap="handleContinueRoom"
-        disabled="{{loading}}"
-      >
-        去房间页解散
-      </button> -->
     </view>
   </view>
+  <view wx:else class="card room-enter">
+    <view class="room-enter-title">开始一局</view>
 
-  <!-- 房间创建/加入 -->
-  <view class="card room-card {{hasProfile && !inRoom ? '' : 'room-card-disabled'}}">
-    <view class="title">房间</view>
-    <view wx:if="{{inRoom}}" class="subtle room-auth-tip">你已在房间中，需先退出当前房间再创建或加入新房间。</view>
-    <view wx:elif="{{!hasProfile}}" class="subtle room-auth-tip">未授权时不可操作，请先完成上方授权登录。</view>
+    <!-- 主次双卡：扫码是主入口（更宽、实底），创建房间为次入口 -->
+    <view class="entry-grid">
+      <view
+        class="entry-card entry-card-main {{(!hasProfile || loading) ? 'entry-card-off' : ''}}"
+        hover-class="{{(!hasProfile || loading) ? 'none' : 'entry-card-hover'}}"
+        bindtap="handleScanJoin"
+      >
+        <view class="entry-icon"><view class="icon-scan"></view></view>
+        <view class="entry-name">扫码加入</view>
+        <view class="entry-sub entry-sub-main">最常见的入口</view>
+      </view>
 
-    <view class="row" style="margin-top: 18rpx;">
-      <button class="btn-primary" style="flex: 1;" bindtap="handleCreateRoom" disabled="{{!hasProfile || inRoom || loading}}">
-        创建房间（房主）
-      </button>
+      <view
+        class="entry-card entry-card-side {{(!hasProfile || loading) ? 'entry-card-off' : ''}}"
+        hover-class="{{(!hasProfile || loading) ? 'none' : 'entry-card-hover'}}"
+        bindtap="handleCreateRoom"
+      >
+        <view class="entry-icon"><view class="icon-plus"></view></view>
+        <view class="entry-name">创建房间</view>
+        <view class="entry-sub">我来当房主</view>
+      </view>
     </view>
 
-    <view class="row join-row" style="margin-top: 18rpx;">
+    <view wx:if="{{showCodeInput}}" class="code-row">
       <input
-        class="input join-input"
+        class="input code-input"
         placeholder="输入房间号"
         value="{{roomCodeInput}}"
         bindinput="handleRoomCodeInput"
-        maxlength="12"
-        disabled="{{!hasProfile || inRoom || loading}}"
+        confirm-type="go"
+        bindconfirm="handleJoinRoom"
+        maxlength="8"
+        disabled="{{!hasProfile || loading}}"
       />
-      <button class="btn-primary join-btn" bindtap="handleJoinRoom" disabled="{{!hasProfile || inRoom || loading}}">
+      <button class="btn-primary code-btn" bindtap="handleJoinRoom" disabled="{{!hasProfile || loading}}">
         加入
       </button>
     </view>
-
-    <view class="row" style="margin-top: 18rpx;">
-      <button class="btn-plain" style="flex: 1;" bindtap="handleScanJoin" disabled="{{!hasProfile || inRoom || loading}}">
-        扫码加入
-      </button>
-    </view>
-
-    <view class="subtle" style="margin-top: 16rpx;">
-      规则：每个成员/房主只能在一个房间中；加入新房间前需先退出当前房间。
-    </view>
+    <view wx:else class="code-toggle" bindtap="handleToggleCodeInput">已有房间号？手动输入</view>
   </view>
 
-  <!-- 注销 -->
-  <button wx:if="{{hasProfile}}" class="btn-danger logout-btn" size="mini" bindtap="handleLogout">注销</button>
-
-  <!-- 资料弹窗：由用户主动点击“开始记账”触发 -->
-  <view wx:if="{{showProfileModal}}" class="overlay" bindtap="handleCloseProfileModal">
-    <view class="overlay-card profile-modal-card" catchtap="noop">
-      <view class="title">完善资料</view>
-      <view class="subtle" style="margin-top: 10rpx;">用于房间内展示头像和昵称，完成后即可创建或加入房间</view>
-
-      <!-- 推荐方案：chooseAvatar + nickname（均需用户主动操作/输入） -->
-      <view wx:if="{{supportChooseAvatar}}">
-        <view class="row profile-modal-avatar-row">
-          <image class="avatar" src="{{draftAvatarLocal}}" mode="aspectFill" />
-          <button class="btn-plain auth-btn" open-type="chooseAvatar" bindchooseavatar="handleChooseAvatar" disabled="{{loading}}">
-            选择头像
-          </button>
-        </view>
-
-        <input
-          class="input"
-          type="nickname"
-          placeholder="请输入昵称"
-          value="{{draftDisplayName}}"
-          bindinput="handleNicknameInput"
-          maxlength="20"
-          style="margin-top: 14rpx;"
-        />
-
-        <view class="row profile-modal-actions">
-          <button class="btn-plain" style="flex: 1;" bindtap="handleCloseProfileModal" disabled="{{loading}}">
-            取消
-          </button>
-          <button
-            class="btn-primary"
-            style="flex: 1; margin-left: 14rpx;"
-            bindtap="handleSaveProfile"
-            disabled="{{!canSaveProfile || loading}}"
-          >
-            保存并开始记账
-          </button>
-        </view>
-      </view>
-
-      <!-- 兼容兜底：老版本不支持 chooseAvatar 时回退到 getUserProfile（仍需按钮点击触发） -->
-      <view wx:else>
-        <view class="subtle" style="margin-top: 18rpx;">当前设备不支持直接选择头像，请使用授权方式获取资料。</view>
-        <view class="row profile-modal-actions">
-          <button class="btn-plain" style="flex: 1;" bindtap="handleCloseProfileModal" disabled="{{loading}}">
-            取消
-          </button>
-          <button class="btn-primary" style="flex: 1; margin-left: 14rpx;" bindtap="handleAuthLegacy" disabled="{{loading}}">
-            授权获取
-          </button>
-        </view>
-      </view>
+  <!-- ④ 次要入口：不抢占主操作视线 -->
+  <view class="quick-links">
+    <view class="quick-link" hover-class="quick-link-hover" bindtap="goLeaderboard">
+      <view class="quick-link-title">总排行榜</view>
+      <view class="quick-link-sub">历史战绩排名</view>
+    </view>
+    <view class="quick-link" hover-class="quick-link-hover" bindtap="goTimeline">
+      <view class="quick-link-title">历史记录</view>
+      <view class="quick-link-sub">往期结算明细</view>
     </view>
   </view>
 </view>

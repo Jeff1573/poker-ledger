@@ -1,9 +1,9 @@
 const { validateRoomCode } = require("../../utils/validator");
 const CONST = require("../../utils/const");
+const log = require("../../utils/log");
 const storage = require("../../utils/storage");
 const { resolveApiAssetUrl } = require("../../utils/url");
-// 小程序版本环境白名单：仅识别微信标准 envVersion 枚举值。
-const VALID_MINI_ENV_VERSIONS = new Set(["develop", "trial", "release"]);
+const { getEnvInfo, buildEnvDetail } = require("../../utils/env");
 
 /**
  * 安全解码：避免非法编码导致 decodeURIComponent 抛错。
@@ -94,29 +94,14 @@ function shouldClearStaleRoomCodeInput(input) {
 }
 
 /**
- * 读取“小程序版本管理”中的版本号。
- * 展示策略：
- * - version 有值：展示具体版本号（如 v1.2.3）
- * - version 为空：回退到环境文案（开发版/体验版/正式版）
- * - 异常：展示未知
+ * 生成一个默认昵称，避免用户必须从零手打昵称才能保存资料。
+ * 采用「玩家 + 4 位数字」，兼顾可读性与唯一性；用户可以随时改成自己的昵称。
  *
  * @returns {string}
  */
-function resolveMiniProgramVersionText() {
-  try {
-    const info = typeof wx.getAccountInfoSync === "function" ? wx.getAccountInfoSync() : null;
-    const miniProgram = (info && info.miniProgram) || {};
-    const version = String(miniProgram.version || "").trim();
-    if (version) return `小程序版本 v${version}`;
-
-    const envVersion = String(miniProgram.envVersion || "").trim().toLowerCase();
-    if (!VALID_MINI_ENV_VERSIONS.has(envVersion)) return "小程序版本 未知";
-    if (envVersion === "develop") return "小程序版本 开发版";
-    if (envVersion === "trial") return "小程序版本 体验版";
-    return "小程序版本 正式版";
-  } catch (err) {
-    return "小程序版本 未知";
-  }
+function buildDefaultNickname() {
+  const n = Math.floor(1000 + Math.random() * 9000);
+  return `玩家${n}`;
 }
 
 /**
@@ -131,20 +116,25 @@ Page({
   data: {
     loading: false,
     hasProfile: false,
-    // 资料弹窗：未授权用户点击“开始记账”后才展开。
-    showProfileModal: false,
     user: null,
     userAvatarUrl: "",
     roomCodeInput: "",
     pendingRoomCode: "",
-    miniVersionText: "",
+    // 手动输入房间号区域：默认收起，只在用户主动点开或携带邀请码时展开
+    showCodeInput: false,
 
-    // 推荐授权方案：chooseAvatar + input(type="nickname")
+    // 当前运行环境标识：让用户一眼看出连的是本地 / 开发版 / 体验版 / 正式版
+    envLabel: "",
+    envTone: "",
+    envDetail: "",
+
+    // 一步式资料设置：头像 + 昵称在同一张卡里完成，不再走「先弹窗再授权」两步
     supportChooseAvatar: false,
     draftAvatarLocal: "",
     draftAvatarPath: "",
     draftDisplayName: "",
     canSaveProfile: false,
+    avatarUploading: false,
 
     // 首页房间状态：首次进入且已在房间会自动跳转；手动回首页后仍可继续/退出。
     inRoom: false,
@@ -163,11 +153,19 @@ Page({
     const supportChooseAvatar =
       !!wx.canIUse && wx.canIUse("button.open-type.chooseAvatar") && wx.canIUse("input.type.nickname");
 
+    const env = getEnvInfo();
+
     this.setData({
       roomCodeInput: pendingRoomCode || "",
       pendingRoomCode,
+      // 携带邀请码时直接展开输入区，让用户看得到待加入的房间号
+      showCodeInput: !!pendingRoomCode,
       supportChooseAvatar,
-      miniVersionText: resolveMiniProgramVersionText()
+      envLabel: env.label,
+      envTone: env.tone,
+      envDetail: env.detail,
+      // 预填一个默认昵称：用户只需选头像即可保存，想改再改，减少一次「必须打字」的操作。
+      draftDisplayName: supportChooseAvatar ? buildDefaultNickname() : ""
     });
   },
 
@@ -180,7 +178,8 @@ Page({
     if (inviteRoomCode) {
       this.setData({
         pendingRoomCode: inviteRoomCode,
-        roomCodeInput: inviteRoomCode
+        roomCodeInput: inviteRoomCode,
+        showCodeInput: true
       });
     }
 
@@ -199,6 +198,30 @@ Page({
   },
 
   /**
+   * 拉取 /api/me，失败时短暂等待后重试一次。
+   * 用途：冷启动第一个请求失败不应直接判定“没有房间/初始化失败”。
+   *
+   * @returns {Promise<any|null>}
+   */
+  async loadMeWithRetry() {
+    const app = getApp();
+    let result = null;
+    try {
+      result = await app.loadMe();
+    } catch (err) {
+      result = null;
+    }
+    if (result && result.ok) return result;
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      return await app.loadMe();
+    } catch (err) {
+      return null;
+    }
+  },
+
+  /**
    * 启动引导：
    * - 先通过 /api/me 判断是否仍在房间中，首页展示“当前房间”状态卡
    * - 再判断是否已有用户档案（是否完成授权）
@@ -214,7 +237,9 @@ Page({
       const app = getApp();
       await app.ensureSession();
 
-      const me = await app.loadMe();
+      // 冷启动时首个请求最容易失败（弱网 / 刚回前台网络未就绪），
+      // 失败会导致首页不自动跳房间、用户以为“进不去”，因此重试一次再判定。
+      const me = await this.loadMeWithRetry();
       if (!me || !me.ok) {
         this.toast((me && me.message) || "初始化失败，请检查后端地址/服务端状态");
         return;
@@ -231,11 +256,18 @@ Page({
         user,
         hasProfile,
         userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx),
+        // develop 环境下把当前虚拟账号也显示出来，避免“工具里建了房、手机上却没有”的困惑
+        envDetail: buildEnvDetail(me.openId),
         inRoom,
         activeRoomCode,
         activeRoomRole,
         activeRoomIsOwner: activeRoomRole === "owner"
       };
+
+      // 未完成资料时，保证昵称输入框有一个可直接使用的默认值，避免用户卡在“必须打字”。
+      if (!hasProfile && !String(this.data.draftDisplayName || "").trim()) {
+        nextPageState.draftDisplayName = this.data.supportChooseAvatar ? buildDefaultNickname() : "";
+      }
 
       // 兜底清理首页内存态残留：
       // 已确认“不在房间”且没有新邀请码时，若输入框仍等于刚失效的房间号，则主动清空。
@@ -414,26 +446,6 @@ Page({
   },
 
   /**
-   * 主动触发资料弹窗，避免进入首页即要求授权。
-   */
-  handleOpenProfileModal() {
-    this.setData({ showProfileModal: true });
-  },
-
-  /**
-   * 关闭资料弹窗。保存/上传进行中不允许关闭，避免流程中断。
-   */
-  handleCloseProfileModal() {
-    if (this.data.loading) return;
-    this.setData({ showProfileModal: false });
-  },
-
-  /**
-   * 占位函数：用于弹窗内容区 catchtap，阻止冒泡到遮罩层。
-   */
-  noop() {},
-
-  /**
    * 退出登录
    * - 调用后端退出接口
    * - 清除全局状态和本地存储
@@ -521,7 +533,8 @@ Page({
     this.setData(
       {
         draftAvatarLocal: local,
-        draftAvatarPath: ""
+        draftAvatarPath: "",
+        avatarUploading: true
       },
       () => this.refreshCanSaveProfile()
     );
@@ -568,8 +581,12 @@ Page({
       );
     } catch (err) {
       console.error("上传头像失败", err);
+      log.error("avatar.upload.fail", "头像上传失败", {
+        errMsg: String((err && err.message) || err || "")
+      });
       this.toast("头像上传失败，请检查网络/后端地址");
     } finally {
+      this.setData({ avatarUploading: false });
       if (!wasLoading) this.setData({ loading: false });
     }
   },
@@ -608,8 +625,12 @@ Page({
         return;
       }
 
-      // 资料保存成功后先关闭弹窗，再走统一的首页刷新链路。
-      this.setData({ showProfileModal: false });
+      // 资料保存成功后清空草稿态（保留默认昵称以便下次复用），再走统一的首页刷新链路。
+      this.setData({
+        draftAvatarLocal: "",
+        draftAvatarPath: "",
+        canSaveProfile: false
+      });
       // 刷新用户档案并继续流程（包含扫码自动加入）
       await this.bootstrap();
     } catch (err) {
@@ -625,6 +646,14 @@ Page({
       .trim()
       .toUpperCase();
     this.setData({ roomCodeInput: v });
+  },
+
+  /**
+   * 展开/收起“手动输入房间号”区域。
+   * 默认收起，避免输入框常驻把卡片撑高。
+   */
+  handleToggleCodeInput() {
+    this.setData({ showCodeInput: !this.data.showCodeInput });
   },
 
   async handleCreateRoom() {
@@ -772,14 +801,29 @@ Page({
       });
 
       if (!r || !r.ok) {
+        // 关键排障信息：错误码 + 服务端请求 ID（可据此在服务端日志里检索完整现场）
+        log.warn("room.join.fail", "加入房间失败", {
+          code: String((r && r.code) || ""),
+          message: String((r && r.message) || ""),
+          reqId: String((r && r.reqId) || ""),
+          roomCodeMasked: log.maskRoomCode(roomCode)
+        });
         this.toast((r && r.message) || "加入失败");
         return;
       }
 
+      log.info("room.join.ok", "加入房间成功", {
+        reqId: String((r && r.reqId) || ""),
+        roomCodeMasked: log.maskRoomCode(roomCode)
+      });
       this.setData({ pendingRoomCode: "" });
       wx.switchTab({ url: "/pages/room/room" });
     } catch (err) {
       console.error("加入房间失败", err);
+      log.error("room.join.error", "加入房间请求异常", {
+        roomCodeMasked: log.maskRoomCode(roomCode),
+        errMsg: String((err && err.message) || err || "")
+      });
       this.toast("加入失败，请稍后重试");
     } finally {
       if (!wasLoading) this.setData({ loading: false });
@@ -820,8 +864,12 @@ Page({
         return;
       }
 
-      // 兼容授权成功后与 chooseAvatar 流程保持一致：关闭弹窗再刷新首页状态。
-      this.setData({ showProfileModal: false });
+      // 兼容授权成功后与 chooseAvatar 流程保持一致：清空草稿态再刷新首页状态。
+      this.setData({
+        draftAvatarLocal: "",
+        draftAvatarPath: "",
+        canSaveProfile: false
+      });
       // 保存成功后按统一路由链路继续（含“已在房间优先 + 邀请自动加入”）。
       await this.bootstrap();
     } catch (err) {

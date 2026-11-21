@@ -8,12 +8,14 @@ const logger = require("./logger");
 
 // 房间号字符集：去掉易混淆字符（0/O，1/I）
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-const ROOM_CODE_LEN = 6;
+const ROOM_CODE_LEN = 4;
 // 交易分页配置：MVP 阶段固定每页/快照均为 100，前后端保持一致。
 const TX_SNAPSHOT_LIMIT = 100;
 const TX_PAGE_DEFAULT_LIMIT = 100;
 const TX_PAGE_MAX_LIMIT = 100;
 const LEADERBOARD_DEFAULT_LIMIT = 100;
+// 一次转账最多支持几个收款人（一炮双响/三响足够，防止异常请求）
+const MAX_TX_TARGETS = 10;
 const LEADERBOARD_MAX_LIMIT = 200;
 const HISTORY_DEFAULT_LIMIT = 20;
 const HISTORY_MAX_LIMIT = 50;
@@ -573,15 +575,16 @@ const stmt = {
   deleteRoomTotals: db.prepare("DELETE FROM room_totals WHERE roomCode = ?"),
 
   listRoomTxsLatest: db.prepare(
-    "SELECT id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar FROM room_txs WHERE roomCode = ? ORDER BY createdAt DESC, id DESC LIMIT ?"
+    "SELECT id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar, groupId FROM room_txs WHERE roomCode = ? ORDER BY createdAt DESC, id DESC LIMIT ?"
   ),
   listRoomTxsBefore: db.prepare(
     "SELECT id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar FROM room_txs WHERE roomCode = ? AND (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ?"
   ),
   insertTx: db.prepare(
-    "INSERT INTO room_txs(id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO room_txs(id, roomCode, fromOpenId, toOpenId, amount, note, createdAt, fromName, toName, fromAvatar, toAvatar, groupId, clientToken) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ),
   countRoomTxs: db.prepare("SELECT COUNT(*) AS c FROM room_txs WHERE roomCode = ?"),
+  findTxByClientToken: db.prepare("SELECT id FROM room_txs WHERE roomCode = ? AND clientToken = ? LIMIT 1"),
   deleteRoomTxs: db.prepare("DELETE FROM room_txs WHERE roomCode = ?"),
 
   updateUserProfile: db.prepare(
@@ -1335,25 +1338,51 @@ function kickMember(ownerOpenId, targetOpenId) {
 }
 
 /**
- * 新增交易（转账）。
+ * 新增交易（转账）。支持一次付款给多人 —— 对应「一炮双响/三响」场景。
  *
- * @param {string} fromOpenId
- * @param {string} toOpenId
- * @param {number} amount
- * @param {string} note
+ * 设计要点：
+ * - 一次提交拆成 N 条真实交易记录，每条仍是「一个付款人 → 一个收款人」的独立债权关系，
+ *   因此 room_totals、结算、排行榜、历史分页等逻辑全部无需改动。
+ * - 同一批次的记录共用一个 groupId，前端可据此折叠展示。
+ * - 全部写入在同一个 db.transaction 内，任何一条校验失败整体回滚，不会出现“转了一半”。
+ * - clientToken 用于幂等：同一房间内重复提交（弱网重试/连点）直接返回首次结果。
+ *
+ * @param {string} fromOpenId 付款人
+ * @param {{openId: string, amount: number}[]} targets 收款人及各自的金额
+ * @param {{note?: string, clientToken?: string}=} opt
+ * @returns {Promise<any>}
  */
-function addTx(fromOpenId, toOpenId, amount, note) {
+function addTxBatch(fromOpenId, targets, opt) {
   return safeWrite(() => {
     const fromOid = String(fromOpenId || "").trim();
-    const toOid = String(toOpenId || "").trim();
-    const amt = Number(amount || 0);
-    const note2 = String(note || "").trim().slice(0, 50);
+    const note2 = String((opt && opt.note) || "").trim().slice(0, 50);
+    const clientToken = String((opt && opt.clientToken) || "").trim().slice(0, 64);
+    const list = Array.isArray(targets) ? targets : [];
 
-    if (!toOid) return fail("INVALID_TO", "请选择收款人");
-    if (toOid === fromOid) return fail("INVALID_TO", "不能转给自己");
-    if (!Number.isInteger(amt)) return fail("INVALID_AMOUNT", "金额必须为整数");
-    if (amt <= 0) return fail("INVALID_AMOUNT", "金额必须大于 0");
-    if (amt > 99999999) return fail("INVALID_AMOUNT", "金额过大");
+    if (!fromOid) return fail("UNAUTHORIZED", "未登录");
+    if (list.length === 0) return fail("INVALID_TO", "请选择收款人");
+    if (list.length > MAX_TX_TARGETS) {
+      return fail("TOO_MANY_TARGETS", `一次最多转给 ${MAX_TX_TARGETS} 个人`);
+    }
+
+    // 归一化 + 去重 + 逐条校验（在进入事务前做，避免无谓的写锁）
+    const normalized = [];
+    const seen = new Set();
+    let totalAmount = 0;
+    for (const raw of list) {
+      const toOid = String((raw && raw.openId) || "").trim();
+      const amt = Number((raw && raw.amount) || 0);
+      if (!toOid) return fail("INVALID_TO", "请选择收款人");
+      if (toOid === fromOid) return fail("INVALID_TO", "不能转给自己");
+      if (seen.has(toOid)) return fail("DUPLICATE_TARGET", "收款人重复，请检查金额");
+      if (!Number.isInteger(amt)) return fail("INVALID_AMOUNT", "金额必须为整数");
+      if (amt <= 0) return fail("INVALID_AMOUNT", "金额必须大于 0");
+      if (amt > 99999999) return fail("INVALID_AMOUNT", "金额过大");
+      seen.add(toOid);
+      totalAmount += amt;
+      if (totalAmount > 99999999) return fail("INVALID_AMOUNT", "合计金额过大");
+      normalized.push({ openId: toOid, amount: amt });
+    }
 
     const tx = db.transaction(() => {
       const mapping = getUserRoom(fromOid);
@@ -1365,63 +1394,126 @@ function addTx(fromOpenId, toOpenId, amount, note) {
       if (String(room.status || "") !== "active") return fail("ROOM_NOT_ACTIVE", "房间不可记账（可能已解散）");
 
       const fromMember = stmt.getRoomMember.get(rc, fromOid);
-      const toMember = stmt.getRoomMember.get(rc, toOid);
       if (!fromMember || !fromMember.active) return fail("MEMBER_INACTIVE", "你已退出房间，不能记账");
-      if (!toMember || !toMember.active) return fail("TO_NOT_IN_ROOM", "收款人不在房间中");
+
+      // 幂等：同一 clientToken 重复提交，直接返回“已处理”，不重复记账
+      if (clientToken) {
+        const existed = stmt.findTxByClientToken.get(rc, clientToken);
+        if (existed && existed.id) {
+          const totalsRows = stmt.listRoomTotals.all(rc);
+          const totalsNow = {};
+          for (const r of totalsRows) {
+            totalsNow[String(r.openId || "")] = Number(r.total || 0);
+          }
+          return { ok: true, duplicated: true, roomCode: rc, count: 0, txs: [], totals: totalsNow };
+        }
+      }
 
       const createdAt = Date.now();
-      const txId = `tx_${createdAt}_${Math.random().toString(16).slice(2, 10)}`;
+      const rand = Math.random().toString(16).slice(2, 10);
+      const groupId = normalized.length > 1 ? `grp_${createdAt}_${rand}` : "";
+      const fromName = String(fromMember.displayName || "");
+      const fromAvatar = String(fromMember.avatarUrl || "");
 
-      stmt.insertTx.run(
-        txId,
-        rc,
-        fromOid,
-        toOid,
-        amt,
-        note2,
-        createdAt,
-        String(fromMember.displayName || ""),
-        String(toMember.displayName || ""),
-        String(fromMember.avatarUrl || ""),
-        String(toMember.avatarUrl || "")
-      );
+      const txs = [];
+      for (let i = 0; i < normalized.length; i += 1) {
+        const t = normalized[i];
+        const toMember = stmt.getRoomMember.get(rc, t.openId);
+        if (!toMember || !toMember.active) {
+          // 事务内抛错以回滚；调用方通过 message 提示
+          throw Object.assign(new Error("收款人不在房间中"), { bizCode: "TO_NOT_IN_ROOM" });
+        }
 
-      // totals：缺失补 0，再做加减
-      stmt.insertRoomTotalIgnore.run(rc, fromOid);
-      stmt.insertRoomTotalIgnore.run(rc, toOid);
-      stmt.subRoomTotal.run(amt, rc, fromOid);
-      stmt.addRoomTotal.run(amt, rc, toOid);
+        const txId = normalized.length === 1
+          ? `tx_${createdAt}_${rand}`
+          : `tx_${createdAt}_${rand}_${i}`;
+
+        // clientToken 只写在批次的第一条上：
+        // 它标识的是「这一次提交」，而 (roomCode, clientToken) 有唯一索引，
+        // 每条都写会互相冲突。
+        const tokenForRow = i === 0 ? clientToken : "";
+
+        stmt.insertTx.run(
+          txId,
+          rc,
+          fromOid,
+          t.openId,
+          t.amount,
+          note2,
+          createdAt,
+          fromName,
+          String(toMember.displayName || ""),
+          fromAvatar,
+          String(toMember.avatarUrl || ""),
+          groupId,
+          tokenForRow
+        );
+
+        stmt.insertRoomTotalIgnore.run(rc, fromOid);
+        stmt.insertRoomTotalIgnore.run(rc, t.openId);
+        stmt.subRoomTotal.run(t.amount, rc, fromOid);
+        stmt.addRoomTotal.run(t.amount, rc, t.openId);
+
+        txs.push({
+          id: txId,
+          roomCode: rc,
+          fromOpenId: fromOid,
+          toOpenId: t.openId,
+          amount: t.amount,
+          note: note2,
+          createdAt,
+          fromName,
+          toName: String(toMember.displayName || ""),
+          fromAvatar,
+          toAvatar: String(toMember.avatarUrl || ""),
+          groupId
+        });
+      }
 
       stmt.updateRoomLastTx.run(createdAt, createdAt, rc);
 
-      // 读取更新后的总账，用于增量推送
       const totalsRows = stmt.listRoomTotals.all(rc);
       const totals = {};
       for (const r of totalsRows) {
         totals[String(r.openId || "")] = Number(r.total || 0);
       }
 
-      // 构造完整交易对象，用于增量推送
-      const tx = {
-        id: txId,
+      return {
+        ok: true,
         roomCode: rc,
-        fromOpenId: fromOid,
-        toOpenId: toOid,
-        amount: amt,
-        note: note2,
-        createdAt,
-        fromName: String(fromMember.displayName || ""),
-        toName: String(toMember.displayName || ""),
-        fromAvatar: String(fromMember.avatarUrl || ""),
-        toAvatar: String(toMember.avatarUrl || "")
+        groupId,
+        count: txs.length,
+        txs,
+        // 单笔时保留 tx，兼容原有增量推送逻辑
+        tx: txs.length === 1 ? txs[0] : null,
+        txId: txs.length === 1 ? txs[0].id : "",
+        totals
       };
-
-      return { ok: true, roomCode: rc, txId, tx, totals };
     });
 
-    return tx();
+    try {
+      return tx();
+    } catch (err) {
+      const bizCode = String((err && err.bizCode) || "");
+      if (bizCode) return fail(bizCode, String((err && err.message) || "记账失败"));
+      throw err;
+    }
   });
 }
+
+/**
+ * 兼容旧调用：单笔转账。
+ *
+ * @param {string} fromOpenId
+ * @param {string} toOpenId
+ * @param {number} amount
+ * @param {string} note
+ * @returns {Promise<any>}
+ */
+function addTx(fromOpenId, toOpenId, amount, note) {
+  return addTxBatch(fromOpenId, [{ openId: toOpenId, amount }], { note });
+}
+
 
 /**
  * 房主解散房间：生成结算快照并清空房间数据。
@@ -1740,6 +1832,7 @@ module.exports = {
   leaveRoom,
   kickMember,
   addTx,
+  addTxBatch,
   dissolveRoom,
 
   // 兼容旧接口：SQLite 下不再需要显式 persist

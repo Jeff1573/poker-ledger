@@ -49,16 +49,25 @@ function request(opt) {
       method,
       data,
       timeout: timeoutMs,
-      header: token
-        ? {
-            Authorization: `Bearer ${token}`
-          }
-        : {},
+      header: {
+        // 上报运行环境与版本，服务端日志据此区分“体验版/正式版/开发版”来源
+        "X-Client-Env": String(CONST.ENV_VERSION || ""),
+        "X-Client-Version": String(CONST.CLIENT_VERSION || ""),
+        ...(token
+          ? {
+              Authorization: `Bearer ${token}`
+            }
+          : {})
+      },
       success: (res) => {
         const durationMs = Date.now() - startAt;
         const body = res && res.data;
+        // 服务端回传的请求 ID：用户报障时可直接给出，用于检索该次请求的全部服务端日志
+        const headers = (res && res.header) || {};
+        const serverReqId = String(headers["X-Request-Id"] || headers["x-request-id"] || "");
         log.info("api.request.end", "接口请求完成", {
           requestId,
+          serverReqId,
           method,
           path,
           statusCode: Number((res && res.statusCode) || 0),
@@ -66,6 +75,9 @@ function request(opt) {
           code: String((body && body.code) || ""),
           durationMs
         });
+        if (body && typeof body === "object" && !body.reqId && serverReqId) {
+          body.reqId = serverReqId;
+        }
         resolve(body);
       },
       fail: (err) => {

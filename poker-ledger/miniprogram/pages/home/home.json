@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "打牌记账"
+  "navigationBarTitleText": "打牌记账",
+  "usingComponents": {
+    "user-avatar": "/components/user-avatar/user-avatar"
+  }
 }

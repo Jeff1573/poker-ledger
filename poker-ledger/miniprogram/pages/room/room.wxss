@@ -376,17 +376,148 @@ page {
   color: #2E8B73;
 }
 
-.tx-avatar {
-  width: 88rpx;
-  height: 88rpx;
-  border-radius: 44rpx;
-  background: #E8E1D2;
-  flex-shrink: 0;
+/* 付款弹层：默认单人，可切多人 */
+.pay-card {
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
 }
 
-.transfer-name {
-  font-size: 32rpx;
+.pay-head {
+  align-items: center;
+}
+
+/* 右上角的个人/多人切换：滑块平滑移动 + 文字颜色渐变，不做瞬间跳变 */
+.pay-mode-switch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4rpx;
+  border-radius: 999rpx;
+  background: #F2ECDD;
+  overflow: hidden;
+}
+
+.pay-mode-thumb {
+  position: absolute;
+  left: 4rpx;
+  top: 4rpx;
+  bottom: 4rpx;
+  width: 84rpx;
+  border-radius: 999rpx;
+  background: #236F5D;
+  transform: translateX(0);
+  transition: transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.pay-mode-switch.is-multi .pay-mode-thumb {
+  transform: translateX(100%);
+}
+
+.pay-mode-item {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: 84rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  text-align: center;
+  font-size: 24rpx;
+  line-height: 1.2;
+  color: #7A756A;
+  transition: color 200ms ease;
+}
+
+.pay-mode-item.active {
+  color: #FFFFFF;
   font-weight: 600;
+}
+
+/* 单人态 */
+.pay-single-row {
+  display: flex;
+  align-items: center;
+  margin-top: 22rpx;
+}
+
+.pay-single-avatar {
+  margin-right: 18rpx;
+}
+
+.pay-single-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.pay-single-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1E2F2A;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pay-single-input {
+  margin-top: 18rpx;
+  width: 100%;
+}
+
+/* 多人态：所有成员一行一个，名称 + 金额 */
+.pay-list {
+  margin-top: 16rpx;
+  max-height: 44vh;
+}
+
+.pay-item {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 2rpx solid rgba(35, 111, 93, 0.08);
+}
+
+.pay-item-avatar {
+  margin-right: 16rpx;
+}
+
+.pay-item-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 27rpx;
+  color: #1E2F2A;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pay-item-input {
+  width: 176rpx;
+  min-height: 72rpx;
+  flex-shrink: 0;
+  text-align: right;
+  padding: 12rpx 16rpx;
+  font-size: 28rpx;
+}
+
+.pay-summary {
+  margin-top: 16rpx;
+  align-items: center;
+  min-height: 44rpx;
+}
+
+.pay-fill {
+  margin-left: 14rpx;
+  flex-shrink: 0;
+  font-size: 24rpx;
+  color: #236F5D;
+  padding: 6rpx 18rpx;
+  border-radius: 999rpx;
+  background: rgba(46, 139, 115, 0.1);
+}
+
+.pay-actions {
+  margin-top: 20rpx;
 }
 
 /* 入房码弹层 */
@@ -419,8 +550,17 @@ page {
   border-radius: 18rpx;
 }
 
+.join-code-number {
+  margin-top: 14rpx;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 700;
+  letter-spacing: 4rpx;
+  color: #1F6C59;
+}
+
 .join-code-tip {
-  margin-top: 12rpx;
+  margin-top: 10rpx;
   text-align: center;
   line-height: 1.5;
 }
@@ -431,4 +571,15 @@ page {
 
 .share-guide-card .title {
   text-align: center;
+}
+
+/* 房间标题行：房间号 + 环境标识（配色见 app.wxss 全局 .env-pill--* ） */
+.room-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.room-env-pill {
+  margin-left: 12rpx;
 }

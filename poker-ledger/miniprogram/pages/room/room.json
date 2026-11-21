@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "房间内",
-  "enableShareAppMessage": true
+  "enableShareAppMessage": true,
+  "usingComponents": {
+    "user-avatar": "/components/user-avatar/user-avatar"
+  }
 }

@@ -1,5 +1,5 @@
 {
-  "libVersion": "3.14.1",
+  "libVersion": "3.18.0",
   "projectname": "poker-ledger",
   "setting": {
     "urlCheck": false,
@@ -16,7 +16,8 @@
     "compileHotReLoad": true,
     "checkInvalidKey": true,
     "ignoreDevUnusedFiles": true,
-    "bigPackageSizeSupport": false
+    "bigPackageSizeSupport": false,
+    "useGlassEaselForWxml": false
   },
   "condition": {}
 }

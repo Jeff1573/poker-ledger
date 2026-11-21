@@ -10,10 +10,20 @@ const logger = require("./logger");
  * - 服务端推送：{ "type": "room_snapshot", "room":..., "members":..., "txs":... }
  * - 房间解散：{ "type": "room_dissolved", "roomCode":"XXXXXX", "settlementId":"XXXXXX" }
  */
-function createWsHub({ wss, store }) {
+function createWsHub({ wss, store, heartbeatIntervalMs, maxMissedPongs }) {
   const roomSockets = new Map(); // Map<string, Set<WebSocket>>
   const allSockets = new Set(); // Set<WebSocket>
   let connSeq = 0;
+
+  // 心跳：每 30 秒探测一次，连续 2 次没有收到任何响应（约 60~90 秒）判定为僵尸连接。
+  // 同时发送协议级 ping（浏览器/小程序底层自动回 pong）和应用级 ping（客户端显式回 pong），
+  // 任一响应都会被视为存活，避免只依赖某一种实现导致误杀。
+  const HEARTBEAT_INTERVAL_MS = Number(heartbeatIntervalMs) > 0
+    ? Number(heartbeatIntervalMs)
+    : 30 * 1000;
+  const MAX_MISSED_PONGS = Number(maxMissedPongs) > 0
+    ? Number(maxMissedPongs)
+    : 2;
 
   /**
    * 从订阅池中移除指定连接。
@@ -31,6 +41,51 @@ function createWsHub({ wss, store }) {
       roomSockets.delete(roomCode);
     }
     ws._roomCode = "";
+  }
+
+  /**
+   * 标记连接在上一轮心跳后仍然存活。
+   * 任意入站消息（包括 pong、订阅、业务消息）都算存活信号。
+   *
+   * @param {any} ws
+   */
+  function markAlive(ws) {
+    if (!ws) return;
+    ws._wsAlive = true;
+    ws._missedPongs = 0;
+  }
+
+  /**
+   * 回收已经失联的连接：先从订阅池移除，再强制断开。
+   *
+   * @param {any} ws
+   * @param {string} reason
+   */
+  function reapStaleSocket(ws, reason) {
+    if (!ws) return;
+    logger.warn({
+      scope: "ws",
+      event: "ws.heartbeat.stale",
+      msg: "心跳超时，回收僵尸连接",
+      reqId: ws._connId || "",
+      roomCode: String(ws._roomCode || ""),
+      openId: ws._openId || "",
+      extra: {
+        reason: String(reason || "missed_pong"),
+        missedPongs: Number(ws._missedPongs || 0)
+      }
+    });
+    removeSocketFromRoom(ws);
+    allSockets.delete(ws);
+    try {
+      ws.terminate();
+    } catch (err) {
+      try {
+        ws.close();
+      } catch (err2) {
+        // ignore
+      }
+    }
   }
 
   /**
@@ -215,9 +270,37 @@ function createWsHub({ wss, store }) {
     ws._openId = openId;
     ws._roomCode = "";
     ws._connId = connId;
+    markAlive(ws);
     allSockets.add(ws);
 
+    // 协议级 pong：浏览器/小程序底层自动回复，作为存活信号。
+    ws.on("pong", () => {
+      markAlive(ws);
+    });
+
+    ws.on("error", (err) => {
+      logger.warn({
+        scope: "ws",
+        event: "ws.connection.error",
+        msg: "WebSocket 连接异常",
+        reqId: ws._connId || "",
+        roomCode: String(ws._roomCode || ""),
+        openId: ws._openId || "",
+        extra: { errMsg: String((err && err.message) || err || "") }
+      });
+      // 异常连接大概率不会再触发 close，主动清理避免泄漏。
+      removeSocketFromRoom(ws);
+      allSockets.delete(ws);
+      try {
+        ws.terminate();
+      } catch (err2) {
+        // ignore
+      }
+    });
+
     ws.on("message", (data) => {
+      // 任何入站消息都说明对端还活着（含应用级 pong）。
+      markAlive(ws);
       let msg;
       try {
         msg = JSON.parse(String(data || ""));
@@ -348,11 +431,69 @@ function createWsHub({ wss, store }) {
     return disconnected;
   }
 
+  /**
+   * 心跳定时器：探测所有连接，回收连续无响应的僵尸连接。
+   * unref 后不会阻止 Node 进程退出。
+   */
+  const heartbeatTimer = setInterval(() => {
+    let probed = 0;
+    let reaped = 0;
+    for (const ws of Array.from(allSockets)) {
+      if (!ws || ws.readyState !== 1) {
+        removeSocketFromRoom(ws);
+        allSockets.delete(ws);
+        reaped += 1;
+        continue;
+      }
+      if (!ws._wsAlive) {
+        ws._missedPongs = Number(ws._missedPongs || 0) + 1;
+        if (ws._missedPongs >= MAX_MISSED_PONGS) {
+          reapStaleSocket(ws, "missed_pong");
+          reaped += 1;
+          continue;
+        }
+      } else {
+        ws._missedPongs = 0;
+        ws._wsAlive = false;
+      }
+      probed += 1;
+      // 应用级 ping：客户端回 {type:"pong"}；老版本客户端不回也没关系，协议级 ping 仍可兜底。
+      try {
+        ws.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+      } catch (err) {
+        // ignore，下一轮会走回收
+      }
+      // 协议级 ping：浏览器/小程序底层自动回 pong。
+      try {
+        ws.ping();
+      } catch (err) {
+        // ignore
+      }
+    }
+    if (probed > 0 || reaped > 0) {
+      logger.debug({
+        scope: "ws",
+        event: "ws.heartbeat.tick",
+        msg: "心跳探测完成",
+        extra: { probed, reaped, sockets: allSockets.size }
+      });
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
+
+  /**
+   * 停止心跳定时器（进程退出或测试收尾时调用）。
+   */
+  function stop() {
+    clearInterval(heartbeatTimer);
+  }
+
   return {
     broadcastSnapshot,
     broadcastTxAdded,
     broadcastDissolved,
-    disconnectOpenId
+    disconnectOpenId,
+    stop
   };
 }
 

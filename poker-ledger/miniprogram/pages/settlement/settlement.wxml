@@ -15,7 +15,7 @@
       <view wx:else style="margin-top: 18rpx;">
         <view wx:for="{{rows}}" wx:key="openId" class="row-between item-row">
           <view class="row">
-            <image class="avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+            <user-avatar class="avatar" src="{{item.avatarUrl}}" name="{{item.displayName}}" size="{{64}}" />
             <view class="name-wrap">
               <view class="name">
                 {{item.displayName}}
@@ -52,7 +52,7 @@
             <view wx:for="{{leaderboardRows}}" wx:key="openId" class="row-between item-row">
               <view class="row">
                 <view class="rank">#{{item.rank}}</view>
-                <image class="avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+                <user-avatar class="avatar" src="{{item.avatarUrl}}" name="{{item.displayName}}" size="{{64}}" />
                 <view class="name-wrap">
                   <view class="name">{{item.displayName}}</view>
                   <view class="subtle">{{item.winCount}}胜 {{item.lossCount}}负 {{item.drawCount}}平</view>

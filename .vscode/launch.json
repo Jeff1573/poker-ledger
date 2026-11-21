@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "后端：启动并调试 (poker-ledger-server)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/poker-ledger-server/src/index.js",
+      "cwd": "${workspaceFolder}/poker-ledger-server",
+      "envFile": "${workspaceFolder}/poker-ledger-server/.env",
+      "console": "integratedTerminal",
+      "restart": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "后端：以 production 模式启动（验证旁路已关闭）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/poker-ledger-server/src/index.js",
+      "cwd": "${workspaceFolder}/poker-ledger-server",
+      "envFile": "${workspaceFolder}/poker-ledger-server/.env",
+      "env": {
+        "NODE_ENV": "production",
+        "DEV_LOGIN": "0"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "后端：调试当前测试文件",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}/poker-ledger-server",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}

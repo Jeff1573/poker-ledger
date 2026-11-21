@@ -275,7 +275,12 @@ async function generateRoomMiniCode(roomCode, envVersionRaw) {
         envVersion
       }
     });
-    return { ok: false, code: codeResult.code, message: codeResult.message };
+    return {
+      ok: false,
+      code: codeResult.code,
+      message: codeResult.message,
+      errcode: Number(codeResult.errcode || 0)
+    };
   }
 
   logger.info({

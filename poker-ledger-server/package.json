@@ -8,6 +8,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node src/index.js",
+    "dev:watch": "node --watch src/index.js",
+    "test": "node --test",
+    "check": "node --check src/index.js",
     "build:web": "tailwindcss -i ./web/input.css -o ./web/admin.css --minify"
   },
   "dependencies": {

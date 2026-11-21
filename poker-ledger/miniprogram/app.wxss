@@ -41,7 +41,8 @@ page {
   background: linear-gradient(135deg, #2E8B73 0%, #1F6C59 100%);
   color: #F8F3E7;
   border-radius: 18rpx;
-  border: none;
+  /* 与 .btn-plain 的 2rpx 边框对齐：否则并排时主按钮会比次按钮矮 2px、窄 2px */
+  border: 2rpx solid transparent;
   font-weight: 700;
 }
 
@@ -76,6 +77,12 @@ page {
   background: #F2ECDD;
   border: 2rpx solid rgba(35, 111, 93, 0.14);
   border-radius: 18rpx;
+  /* 微信原生 input 自带内建行高。改成 border-box 后，若只写 height，
+     竖向 padding 会把内容区吃光，表现为输入框变扁、文字上下被裁。
+     所以：border-box 解决 width:100% 撑破容器；min-height 保证总高度足够；
+     竖向 padding 保留（它负责文字垂直居中，是被验证过能正常显示的方案）。 */
+  box-sizing: border-box;
+  min-height: 88rpx;
   padding: 20rpx;
   font-size: 32rpx;
   color: #1E2F2A;
@@ -93,3 +100,67 @@ page {
   align-items: center;
   justify-content: space-between;
 }
+
+/* 统一盒模型：这些元素同时设置了 width:100% 和 padding/border，
+ * 小程序的默认盒模型是 content-box，会把它们在右侧撑出容器（表现为左右内边距不对称、贴边、被裁切）。
+ * 注意：.input 单独在下面处理，它还需要 min-height 保证高度，不能只靠这一条。 */
+.card,
+.overlay-card,
+.btn-primary,
+.btn-plain {
+  box-sizing: border-box;
+}
+
+/* ---------- 环境标识（首页 / 房间 / 我的 共用） ---------- */
+
+.env-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 5rpx 14rpx;
+  border-radius: 999rpx;
+  font-size: 21rpx;
+  font-weight: 700;
+  line-height: 1.4;
+  background: rgba(46, 139, 115, 0.1);
+  color: #236F5D;
+  flex-shrink: 0;
+}
+
+.env-dot {
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 999rpx;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.env-text {
+  color: inherit;
+  white-space: nowrap;
+}
+
+/* 本地开发（开发者工具模拟器） */
+.env-pill--dev {
+  background: #F7DCB0;
+  color: #5A3A08;
+}
+
+/* 开发版（真机预览 / 真机调试） */
+.env-pill--develop {
+  background: #D3E9FA;
+  color: #123B5C;
+}
+
+/* 体验版 */
+.env-pill--trial {
+  background: #E6D7F7;
+  color: #3A1A5E;
+}
+
+/* 正式版 */
+.env-pill--release {
+  background: #E1F0EA;
+  color: #1D5C4B;
+}
+

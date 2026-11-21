@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "总排行榜"
+  "navigationBarTitleText": "总排行榜",
+  "usingComponents": {
+    "user-avatar": "/components/user-avatar/user-avatar"
+  }
 }

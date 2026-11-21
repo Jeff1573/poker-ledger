@@ -1,0 +1,21 @@
+<view
+  class="ua {{bordered ? 'ua-bordered' : ''}}"
+  style="width: {{size}}rpx; height: {{size}}rpx; border-radius: {{cornerRadius}}rpx;"
+>
+  <image
+    wx:if="{{displaySrc && !failed}}"
+    class="ua-img"
+    src="{{displaySrc}}"
+    mode="aspectFill"
+    style="border-radius: {{cornerRadius}}rpx;"
+    bindload="handleLoad"
+    binderror="handleError"
+  />
+  <view
+    wx:else
+    class="ua-fallback"
+    style="border-radius: {{cornerRadius}}rpx; background: {{fallbackBg}}; color: {{fallbackFg}}; font-size: {{fontSize}}rpx;"
+  >
+    {{initial}}
+  </view>
+</view>

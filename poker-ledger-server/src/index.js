@@ -39,6 +39,17 @@ app.use(
 app.use((req, res, next) => {
   req._reqId = makeReqId();
   req._startAt = Date.now();
+  // 客户端自报的运行环境与版本（小程序端在请求头里带上），
+  // 用于事后判断“某个用户是不是连到了另一个后端 / 用了体验版”。
+  req._clientEnv = String(req.headers["x-client-env"] || "").trim().slice(0, 24);
+  req._clientVersion = String(req.headers["x-client-version"] || "").trim().slice(0, 40);
+
+  // 把 reqId 回传给客户端：用户报障时截图即可定位这一次请求的全部日志。
+  try {
+    res.setHeader("X-Request-Id", req._reqId);
+  } catch (err) {
+    // ignore
+  }
 
   res.on("finish", () => {
     if (!config.LOG_HTTP_ACCESS) return;
@@ -54,7 +65,10 @@ app.use((req, res, next) => {
         method: String(req.method || ""),
         path: String(req.path || ""),
         statusCode: Number(res.statusCode || 0),
-        ip: getClientIp(req)
+        ip: getClientIp(req),
+        clientEnv: String(req._clientEnv || ""),
+        clientVersion: String(req._clientVersion || ""),
+        ua: String(req.headers["user-agent"] || "").slice(0, 120)
       }
     });
   });
@@ -69,7 +83,84 @@ const WEB_ROOT = path.join(__dirname, "..", "web");
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
 
 // 静态资源托管：前端可通过 `${API_BASE_URL}/uploads/...` 直接访问
+//
+// 说明：这里单独记一条访问日志（而不是靠后面统一的 http.access 中间件），
+// 因为 express.static 挂载在最前面，命中后不会再进入后续中间件。
+// 头像显示异常时，"真机到底有没有把这张图请求过来"是判断问题的第一分界线：
+// - 日志里有该请求 → 图片已送到，问题在渲染（协议/格式/尺寸）
+// - 日志里没有该请求 → 图片在客户端就没发起，通常是域名校验、http 明文拦截或 URL 拼错
+app.use("/uploads", (req, res, next) => {
+  if (String(process.env.LOG_HTTP_ACCESS || "").trim() === "1") {
+    res.on("finish", () => {
+      logger.info({
+        scope: "http.static",
+        event: "http.static.done",
+        msg: "静态资源请求完成",
+        extra: {
+          method: req.method,
+          path: req.originalUrl,
+          statusCode: res.statusCode,
+          bytes: Number(res.getHeader("content-length") || 0),
+          ip: req.ip,
+          clientEnv: String(req.headers["x-client-env"] || ""),
+          ua: String(req.headers["user-agent"] || "").slice(0, 160)
+        }
+      });
+    });
+  }
+  next();
+});
+
 app.use("/uploads", express.static(UPLOAD_ROOT));
+
+/**
+ * 头像内联接口：把头像转成 data URL 返回。
+ *
+ * 背景：真机（iOS/Android）的 <image> 组件**不能加载 http 明文图片**，
+ * 而本地开发后端只有 http。表现就是「开发者工具里能显示、真机上头像加载失败」。
+ * wx.request 不受这个限制，所以这里用一次请求把图片内容取回来，
+ * 客户端用 `data:image/jpeg;base64,...` 直接渲染，从而绕开明文限制。
+ *
+ * 仅在本地/开发环境使用（生产走 https，不需要这个接口）。
+ */
+app.get("/api/avatars/inline", (req, res) => {
+  const AVATAR_URL_PREFIX = "/uploads/avatars/";
+  const raw = String(req.query.src || "").trim();
+
+  if (!raw.startsWith(AVATAR_URL_PREFIX) || raw.includes("..")) {
+    return fail(res, "BAD_PATH", "头像路径非法");
+  }
+  const fileName = raw.slice(AVATAR_URL_PREFIX.length);
+  if (!/^[A-Za-z0-9._-]+$/.test(fileName)) {
+    return fail(res, "BAD_PATH", "头像路径非法");
+  }
+
+  let buf;
+  try {
+    buf = fs.readFileSync(path.join(AVATAR_DIR, fileName));
+  } catch (err) {
+    return fail(res, "NOT_FOUND", "头像不存在");
+  }
+  // 头像本来就限制在 2MB 内，再兜一层，避免把过大的 base64 塞进 JSON
+  if (buf.length > 512 * 1024) {
+    return fail(res, "TOO_LARGE", "头像过大");
+  }
+
+  const ext = path.extname(fileName).toLowerCase();
+  const mime = ext === ".png"
+    ? "image/png"
+    : ext === ".webp"
+      ? "image/webp"
+      : ext === ".gif"
+        ? "image/gif"
+        : "image/jpeg";
+
+  return ok(res, {
+    dataUrl: `data:${mime};base64,${buf.toString("base64")}`,
+    bytes: buf.length
+  });
+});
+
 
 // 头像上传：使用内存存储，服务端自行落盘（便于统一命名与校验）
 const upload = multer({
@@ -79,6 +170,30 @@ const upload = multer({
     fileSize: 2 * 1024 * 1024
   }
 });
+
+// 本地开发登录旁路使用的固定 code / openId。
+// 仅在 DEV_LOGIN=1 且 NODE_ENV !== "production" 时生效，生产环境永远不会走到这条分支。
+// 支持 `DEV_MOCK_LOGIN:<tag>` 形式：不同 tag 视为不同用户，便于本地模拟多人同房。
+const DEV_MOCK_LOGIN_CODE = "DEV_MOCK_LOGIN";
+const DEV_MOCK_OPENID = "dev_mock_openid";
+const DEV_MOCK_TAG_RE = /^[a-z0-9_-]{1,16}$/;
+
+/**
+ * 根据开发登录 code 推导 openid。
+ *
+ * @param {string} code
+ * @returns {string} 非法 tag 返回空串
+ */
+function resolveDevMockOpenId(code) {
+  if (code === DEV_MOCK_LOGIN_CODE) return DEV_MOCK_OPENID;
+
+  const prefix = `${DEV_MOCK_LOGIN_CODE}:`;
+  if (!code.startsWith(prefix)) return "";
+
+  const tag = code.slice(prefix.length).trim().toLowerCase();
+  if (!DEV_MOCK_TAG_RE.test(tag)) return "";
+  return `dev_mock_${tag}`;
+}
 
 const ALLOWED_IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const TX_PAGE_DEFAULT_LIMIT = 100;
@@ -95,8 +210,28 @@ const ROOM_IMAGE_RATE_LIMIT_MAX = Number(config.ROOM_IMAGE_RATE_LIMIT_MAX || 30)
 const ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const ADMIN_LOGIN_RATE_LIMIT_MAX = 10;
 const roomMiniCodeCache = new Map();
+// 小程序码「不可用」负缓存：key=envVersion，value=恢复尝试时间戳。
+// 触发场景：账号未认证（85411/85412）、页面未发布（41030）、IP 未白名单（40164）等。
+// 命中期间直接走本地入房二维码，避免每次打开邀请面板都去打微信接口、白耗调用额度。
+const roomMiniCodeFallbackUntil = new Map();
+const MINICODE_FALLBACK_TTL_MS = 10 * 60 * 1000;
 const roomImageIssueRateLimit = new Map();
 const adminLoginRateLimit = new Map();
+
+/**
+ * 生成降级用的「入房二维码」。
+ * 内容为 PLROOM:<roomCode>，在小程序内点「扫码加入」可被 wx.scanCode 识别并直接进房。
+ *
+ * @param {string} roomCode
+ * @returns {Promise<Buffer>}
+ */
+async function buildFallbackRoomQr(roomCode) {
+  return QRCode.toBuffer(`PLROOM:${roomCode}`, {
+    type: "png",
+    width: 600,
+    margin: 1
+  });
+}
 
 /**
  * 根据 mime 推断扩展名（仅用于落盘命名）。
@@ -291,16 +426,22 @@ function verifyRoomImageRequestAccess(req, asset, roomCode) {
 
 /**
  * 统一输出成功。
+ * 额外回传 reqId：客户端/用户报障时可直接给出该 ID 供服务端检索日志。
  */
 function ok(res, data) {
-  res.json({ ok: true, ...data });
+  res.json({ ok: true, reqId: String((res.req && res.req._reqId) || ""), ...data });
 }
 
 /**
  * 统一输出失败（HTTP 200，前端按 ok 判断）。
  */
 function fail(res, code, message) {
-  res.json({ ok: false, code, message });
+  res.json({
+    ok: false,
+    code,
+    message,
+    reqId: String((res.req && res.req._reqId) || "")
+  });
 }
 
 /**
@@ -333,6 +474,64 @@ function getRateLimitIp(req) {
   if (socketIp) return socketIp;
   const expressIp = String((req && req.ip) || "").trim();
   return expressIp || "unknown";
+}
+
+/**
+ * 汇总一次房间操作失败时的“现场状态”，用于事后定位（不含任何凭证）。
+ *
+ * 典型用途：
+ * - ALREADY_IN_ROOM：直接看出他卡在哪个旧房间、是房主还是成员
+ * - PROFILE_REQUIRED：看出是缺昵称还是缺头像
+ * - ROOM_NOT_ACTIVE：看出目标房间的 status
+ *
+ * @param {string} openId
+ * @param {string} roomCode 目标房间号（可为空，如创建房间失败时）
+ * @returns {object}
+ */
+function buildRoomFailureContext(openId, roomCode) {
+  const ctx = {
+    hasDisplayName: false,
+    hasAvatar: false,
+    currentRoomCode: "",
+    currentRoomRole: "",
+    targetRoomStatus: "",
+    targetMemberCount: 0
+  };
+
+  try {
+    const user = store.getUser(openId);
+    ctx.hasDisplayName = !!(user && user.displayName);
+    ctx.hasAvatar = !!(user && user.avatarUrlWx);
+  } catch (err) {
+    // ignore
+  }
+
+  try {
+    const mapping = store.getUserRoom(openId);
+    if (mapping) {
+      ctx.currentRoomCode = String(mapping.roomCode || "").trim().toUpperCase();
+      ctx.currentRoomRole = String(mapping.role || "");
+    }
+  } catch (err) {
+    // ignore
+  }
+
+  const target = String(roomCode || "").trim().toUpperCase();
+  if (target) {
+    try {
+      const snap = store.getRoomSnapshot(target);
+      if (snap && snap.room) {
+        ctx.targetRoomStatus = String(snap.room.status || "");
+        ctx.targetMemberCount = Number(snap.room.memberCount || 0);
+      } else {
+        ctx.targetRoomStatus = "MISSING";
+      }
+    } catch (err) {
+      ctx.targetRoomStatus = "QUERY_FAILED";
+    }
+  }
+
+  return ctx;
 }
 
 /**
@@ -643,6 +842,49 @@ app.post("/api/uploads/avatar", authMiddleware, upload.single("file"), async (re
 });
 
 /**
+ * 判断本地开发登录旁路是否可用。
+ *
+ * 约束：必须显式设置 DEV_LOGIN=1，且运行环境不是 production。
+ * 生产镜像/容器不设置该变量，因此不会存在旁路入口。
+ *
+ * @returns {boolean}
+ */
+function isDevLoginEnabled() {
+  const flag = String(process.env.DEV_LOGIN || "").trim() === "1";
+  const isProd = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+  return flag && !isProd;
+}
+
+/**
+ * 把 wx.login 的 code 换成 openid。
+ * 本地开发未配置微信凭证时，可用固定 code 走旁路，便于完整调试业务功能。
+ *
+ * @param {import("express").Request} req
+ * @param {string} code
+ * @returns {Promise<{ok: true, openId: string} | {ok: false, code: string, message: string}>}
+ */
+async function resolveOpenIdByCode(req, code) {
+  const isDevCode = code === DEV_MOCK_LOGIN_CODE || code.startsWith(`${DEV_MOCK_LOGIN_CODE}:`);
+  if (isDevCode) {
+    if (!isDevLoginEnabled()) {
+      return { ok: false, code: "DEV_LOGIN_DISABLED", message: "本地开发登录旁路未开启" };
+    }
+
+    const openId = resolveDevMockOpenId(code);
+    if (!openId) {
+      return { ok: false, code: "INVALID_DEV_USER", message: "本地开发身份标识非法" };
+    }
+
+    routeLog(req, "warn", "auth.wechat.dev_bypass", "使用本地开发登录旁路（未调用微信接口）", {
+      openId
+    });
+    return { ok: true, openId };
+  }
+
+  return codeToOpenId(code);
+}
+
+/**
  * 登录：用 wx.login 的 code 换 openid，并签发 JWT。
  */
 app.post("/api/auth/wechat", async (req, res) => {
@@ -654,7 +896,7 @@ app.post("/api/auth/wechat", async (req, res) => {
     return fail(res, "INVALID_CODE", "缺少 code");
   }
 
-  const r = await codeToOpenId(code);
+  const r = await resolveOpenIdByCode(req, code);
   if (!r.ok) {
     routeLog(req, "warn", "auth.wechat.fail", "微信登录失败：code 换取 openid 失败", {
       code: String(r.code || "")
@@ -711,6 +953,57 @@ app.get("/api/me", authMiddleware, async (req, res) => {
     roomCode: me.roomCode || ""
   });
   return ok(res, me);
+});
+
+/**
+ * 账号自检接口：一次性回答“我这个号现在是什么状态”。
+ *
+ * 用途：用户报障（进不去房间 / 显示未加入）时，用他的 token 调用即可拿到全部判定依据，
+ * 不需要现场复现、也不需要翻数据库。仅返回状态，不包含任何凭证。
+ */
+app.get("/api/diagnostics/me", authMiddleware, async (req, res) => {
+  const openId = req.openId;
+  const me = store.getMe(openId);
+  const user = me.user || null;
+  const roomCode = String(me.roomCode || "").trim().toUpperCase();
+
+  let roomStatus = "";
+  let memberCount = 0;
+  if (roomCode) {
+    const snap = store.getRoomSnapshot(roomCode);
+    roomStatus = snap && snap.room ? String(snap.room.status || "") : "MISSING";
+    memberCount = snap && snap.room ? Number(snap.room.memberCount || 0) : 0;
+  }
+
+  const payload = {
+    serverTime: Date.now(),
+    env: {
+      nodeEnv: String(process.env.NODE_ENV || ""),
+      port: Number(config.PORT || 0),
+      wechatConfigured: !!(config.WECHAT_APPID && config.WECHAT_APPSECRET),
+      devLoginEnabled: isDevLoginEnabled()
+    },
+    openIdTail: String(openId).slice(-6),
+    hasProfile: !!(user && user.displayName && user.avatarUrlWx),
+    hasDisplayName: !!(user && user.displayName),
+    hasAvatar: !!(user && user.avatarUrlWx),
+    displayName: (user && user.displayName) || "",
+    inRoom: !!me.inRoom,
+    roomCode,
+    role: String(me.role || ""),
+    roomStatus,
+    memberCount
+  };
+
+  routeLog(req, "info", "diagnostics.me", "输出账号诊断信息", {
+    inRoom: payload.inRoom,
+    roomCode,
+    hasProfile: payload.hasProfile,
+    roomStatus,
+    memberCount
+  });
+
+  return ok(res, payload);
 });
 
 /**
@@ -798,7 +1091,8 @@ app.post("/api/rooms/create", authMiddleware, async (req, res) => {
 
   if (!result.ok) {
     routeLog(req, "warn", "room.create.fail", "创建房间失败", {
-      code: String(result.code || "")
+      code: String(result.code || ""),
+      ...buildRoomFailureContext(openId, "")
     });
     return fail(res, result.code, result.message);
   }
@@ -826,7 +1120,8 @@ app.post("/api/rooms/join", authMiddleware, async (req, res) => {
   if (!result.ok) {
     routeLog(req, "warn", "room.join.fail", "加入房间失败", {
       code: String(result.code || ""),
-      roomCode
+      roomCode,
+      ...buildRoomFailureContext(openId, roomCode)
     });
     return fail(res, result.code, result.message);
   }
@@ -1007,52 +1302,63 @@ app.post("/api/rooms/kick", authMiddleware, async (req, res) => {
 });
 
 /**
- * 新增交易（转账）。
+ * 新增交易（转账）。支持一次付款给多人（一炮双响/三响）。
+ *
+ * 入参两种写法，二选一：
+ * - 单笔：  { toOpenId, amount }
+ * - 多人：  { targets: [{ openId, amount }] }
+ * 可选：note、clientToken（幂等去重）
  */
 app.post("/api/txs", authMiddleware, async (req, res) => {
   const fromOpenId = req.openId;
-  const toOpenId = String((req.body && req.body.toOpenId) || "").trim();
-  const note = String((req.body && req.body.note) || "").trim().slice(0, 50);
-  const amount = Number((req.body && req.body.amount) || 0);
+  const body = req.body || {};
+  const note = String(body.note || "").trim().slice(0, 50);
+  const clientToken = String(body.clientToken || "").trim().slice(0, 64);
 
-  if (!toOpenId) {
-    routeLog(req, "warn", "tx.add.fail", "新增交易失败：缺少收款人", { code: "INVALID_TO" });
+  // 统一归一化成 targets 数组
+  let targets = [];
+  if (Array.isArray(body.targets)) {
+    targets = body.targets.map((t) => ({
+      openId: String((t && t.openId) || "").trim(),
+      amount: Number((t && t.amount) || 0)
+    }));
+  } else {
+    const toOpenId = String(body.toOpenId || "").trim();
+    const amount = Number(body.amount || 0);
+    if (!toOpenId) {
+      routeLog(req, "warn", "tx.add.fail", "新增交易失败：缺少收款人", { code: "INVALID_TO" });
+      return fail(res, "INVALID_TO", "请选择收款人");
+    }
+    targets = [{ openId: toOpenId, amount }];
+  }
+
+  if (targets.length === 0) {
+    routeLog(req, "warn", "tx.add.fail", "新增交易失败：收款人为空", { code: "INVALID_TO" });
     return fail(res, "INVALID_TO", "请选择收款人");
   }
-  if (toOpenId === fromOpenId) {
-    routeLog(req, "warn", "tx.add.fail", "新增交易失败：不能转给自己", { code: "INVALID_TO" });
-    return fail(res, "INVALID_TO", "不能转给自己");
-  }
-  if (!Number.isInteger(amount)) {
-    routeLog(req, "warn", "tx.add.fail", "新增交易失败：金额非整数", {
-      code: "INVALID_AMOUNT"
-    });
-    return fail(res, "INVALID_AMOUNT", "金额必须为整数");
-  }
-  if (amount <= 0) {
-    routeLog(req, "warn", "tx.add.fail", "新增交易失败：金额小于等于 0", {
-      code: "INVALID_AMOUNT"
-    });
-    return fail(res, "INVALID_AMOUNT", "金额必须大于 0");
-  }
-  if (amount > 99999999) {
-    routeLog(req, "warn", "tx.add.fail", "新增交易失败：金额过大", {
-      code: "INVALID_AMOUNT"
-    });
-    return fail(res, "INVALID_AMOUNT", "金额过大");
-  }
 
-  const result = await store.addTx(fromOpenId, toOpenId, amount, note);
+  // 具体校验（去重、自身、金额范围、成员状态）统一在 store 里做，保证单入口
+  const result = await store.addTxBatch(fromOpenId, targets, { note, clientToken });
 
   if (!result.ok) {
     routeLog(req, "warn", "tx.add.fail", "新增交易失败", {
-      code: String(result.code || "")
+      code: String(result.code || ""),
+      targetCount: targets.length
     });
     return fail(res, result.code, result.message);
   }
 
-  // 增量推送：如果返回了完整交易对象和总账，则推送增量更新；否则兜底推送完整快照
-  if (result.tx && result.totals) {
+  if (result.duplicated) {
+    routeLog(req, "info", "tx.add.duplicated", "重复提交已忽略（clientToken 命中）", {
+      roomCode: result.roomCode,
+      targetCount: targets.length
+    });
+    wsHub.broadcastSnapshot(result.roomCode);
+    return ok(res, { duplicated: true, count: 0 });
+  }
+
+  // 单笔走增量推送；多笔一次性推快照（避免客户端短时间内收到多条增量造成闪动）
+  if (result.count === 1 && result.tx && result.totals) {
     wsHub.broadcastTxAdded(result.roomCode, result.tx, result.totals);
   } else {
     wsHub.broadcastSnapshot(result.roomCode);
@@ -1061,10 +1367,17 @@ app.post("/api/txs", authMiddleware, async (req, res) => {
   routeLog(req, "info", "tx.add.ok", "新增交易成功", {
     roomCode: result.roomCode,
     txId: String(result.txId || ""),
-    amount
+    count: Number(result.count || 0),
+    groupId: String(result.groupId || ""),
+    totalAmount: targets.reduce((sum, t) => sum + Number(t.amount || 0), 0)
   });
 
-  return ok(res, { txId: result.txId });
+  return ok(res, {
+    txId: String(result.txId || ""),
+    txIds: (result.txs || []).map((t) => t.id),
+    groupId: String(result.groupId || ""),
+    count: Number(result.count || 0)
+  });
 });
 
 /**
@@ -1322,6 +1635,10 @@ app.get("/api/rooms/:roomCode/share-codes", authMiddleware, async (req, res) => 
       joinCode: {
         minicodeUrl,
         qrcodeUrl,
+        // 小程序码当前是否可用（账号未认证/页面未发布/凭证问题时为 false）。
+        // 客户端据此切换提示语：不可用时这张图只能在小程序内「扫码加入」里扫，
+        // 微信「扫一扫」是打不开小程序的。
+        minicodeAvailable: Number(roomMiniCodeFallbackUntil.get(envVersion) || 0) <= Date.now(),
         expireAt
       }
     });
@@ -1378,15 +1695,38 @@ app.get("/api/rooms/:roomCode/minicode.png", async (req, res) => {
   }
 
   try {
+    // 负缓存命中：近期已知小程序码不可用，直接给入房二维码，不再打微信接口
+    const fallbackUntil = Number(roomMiniCodeFallbackUntil.get(envVersion) || 0);
+    if (fallbackUntil > nowMs) {
+      const fallbackPng = await buildFallbackRoomQr(roomCode);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(fallbackPng);
+      routeLog(req, "debug", "room.minicode.fallback_cached", "小程序码暂不可用，继续使用入房二维码", {
+        roomCode,
+        envVersion,
+        retryInMs: fallbackUntil - nowMs
+      });
+      return;
+    }
+
     const result = await generateRoomMiniCode(roomCode, envVersion);
     if (!result.ok) {
-      routeLog(req, "warn", "room.minicode.fail", "生成房间小程序码失败", {
-        code: String(result.code || ""),
+      // 统一降级：任何原因拿不到小程序码，都退回本地入房二维码。
+      // 常见原因：未配置凭证、账号未认证(85411/85412)、页面未发布(41030)、IP 未白名单(40164)。
+      // 入房二维码在小程序内「扫码加入」一样能用，功能不受影响。
+      const fallbackPng = await buildFallbackRoomQr(roomCode);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(fallbackPng);
+      roomMiniCodeFallbackUntil.set(envVersion, Date.now() + MINICODE_FALLBACK_TTL_MS);
+      routeLog(req, "warn", "room.minicode.fallback", "小程序码不可用，已降级为入房二维码", {
         roomCode,
-        envVersion
+        envVersion,
+        code: String(result.code || ""),
+        errcode: Number(result.errcode || 0),
+        message: String(result.message || "")
       });
-      const statusCode = result.code === "WECHAT_SECRET_MISSING" ? 500 : 502;
-      res.status(statusCode).end();
       return;
     }
 
@@ -1512,3 +1852,32 @@ initAdminPassword()
     });
     process.exit(1);
   });
+
+/**
+ * 优雅退出：停掉心跳定时器、关闭 WebSocket 与 HTTP 服务，避免残留定时器/连接。
+ */
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({
+    scope: "server",
+    event: "server.shutdown",
+    msg: "服务正在退出",
+    extra: { signal: String(signal || "") }
+  });
+  try {
+    wsHub.stop();
+  } catch (err) {
+    // ignore
+  }
+  try {
+    wss.close();
+  } catch (err) {
+    // ignore
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -4,6 +4,7 @@ const { formatTime } = require("../../utils/format");
 const { resolveApiAssetUrl } = require("../../utils/url");
 const storage = require("../../utils/storage");
 const log = require("../../utils/log");
+const { getEnvInfo } = require("../../utils/env");
 
 const TX_PAGE_SIZE = 100;
 const TX_FRONT_SOFT_LIMIT = 500;
@@ -206,6 +207,10 @@ Page({
     isKickingMember: false,
     isDissolving: false,
 
+    // 当前环境标识：房间页也能一眼确认连的是哪个后端
+    envLabel: "",
+    envTone: "",
+
     roomCode: "",
     showShareGuide: false,
     ownerGuideShown: false,
@@ -227,15 +232,23 @@ Page({
 
     // 点击成员头像转账（弹窗）
     showTransferModal: false,
-    transferToOpenId: "",
-    transferToName: "",
-    transferToAvatarUrl: "",
-    transferAmountText: "",
-    transferCanSubmit: false,
+    // 默认单人付款（与旧版一致）；只有用户主动切到多人时才展开全员列表
+    payMultiMode: false,
+    paySingleOpenId: "",
+    paySingleName: "",
+    paySingleAvatar: "",
+    paySingleAmountText: "",
+    // 除自己外的全部成员，名称 + 金额一行；填了金额才计入本次付款
+    payRows: [],
+    payFilledCount: 0,
+    payCanSubmit: false,
+    paySummaryText: "",
 
     // 入房码弹层
     showJoinCode: false,
     joinCodeUrl: "",
+    // true=真正的小程序码（微信扫一扫可打开）；false=入房二维码（只能在小程序内扫）
+    joinCodeIsMini: true,
     joinCodeLoadError: false
   },
 
@@ -245,7 +258,8 @@ Page({
     this._joinCodeLoading = false;
     this._lastIncomingSnapshotMeta = null;
     this._lastIncomingSnapshotFingerprint = "";
-    this.setData({ viewState: "loading" });
+    const env = getEnvInfo();
+    this.setData({ viewState: "loading", envLabel: env.label, envTone: env.tone });
   },
 
   onShow() {
@@ -268,6 +282,9 @@ Page({
 
   onUnload() {
     this._pageActive = false;
+    // 页面被销毁（编译热重载、返回后重建等）时必须主动断开，
+    // 否则服务端会一直保留这个已失效的订阅连接。
+    this.closeSocket();
   },
 
   noop() {},
@@ -330,11 +347,15 @@ Page({
       txCursorId: "",
       txScrollIntoView: "",
       showTransferModal: false,
-      transferToOpenId: "",
-      transferToName: "",
-      transferToAvatarUrl: "",
-      transferAmountText: "",
-      transferCanSubmit: false,
+      payMultiMode: false,
+      paySingleOpenId: "",
+      paySingleName: "",
+      paySingleAvatar: "",
+      paySingleAmountText: "",
+      payRows: [],
+      payFilledCount: 0,
+      payCanSubmit: false,
+      paySummaryText: "",
       showJoinCode: false,
       joinCodeUrl: "",
       joinCodeLoadError: false
@@ -386,8 +407,10 @@ Page({
 
       const me = await app.loadMe();
       if (!me || !me.ok) {
-        this.toast((me && me.message) || "房间状态初始化失败");
-        this.applyNoRoomState();
+        // 注意：/api/me 偶发失败（弱网、超时、后端重启瞬间）不代表真的不在房间。
+        // 若本地还缓存着房间视图，保留它并提示刷新，避免误显示“你还未加入房间”。
+        this.toast((me && me.message) || "房间状态刷新失败，请稍后重试");
+        if (!hasRoomViewCache) this.applyNoRoomState();
         return;
       }
 
@@ -416,8 +439,10 @@ Page({
       log.error("room.bootstrap.fail", "房间 tab 初始化失败", {
         errMsg: String((err && err.message) || err || "")
       });
-      this.toast("房间初始化失败，请稍后重试");
-      this.applyNoRoomState();
+      this.toast("房间状态刷新失败，请稍后重试");
+      // 同上：瞬时异常（网络抖动、请求超时）不应把已有房间视图清成“未加入”。
+      // 只有本地没有房间视图缓存时才进入空态；真实退房/解散由服务端 inRoom=false 正常触发。
+      if (!hasRoomViewCache) this.applyNoRoomState();
     } finally {
       this.setData({
         loading: false,
@@ -489,8 +514,9 @@ Page({
         roomCodeMasked: log.maskRoomCode(roomCode),
         errMsg: String((err && err.message) || err || "")
       });
-      this.toast("进入房间失败，请检查后端/网络");
-      this.applyNoRoomState();
+      // 瞬时异常（弱网、登录态刷新失败）不清理房间视图：
+      // 服务端映射通常仍在，WS onClose 后会自动重连恢复，这里清空反而造成“未加入”假象。
+      this.toast("进入房间失败，正在自动重试");
     } finally {
       this._entering = false;
     }
@@ -827,6 +853,18 @@ Page({
       txCount: type === "room_snapshot" && Array.isArray(data.txs) ? data.txs.length : undefined
     });
 
+    // 服务端心跳：立即回复 pong，避免被判定为僵尸连接而断开。
+    if (type === "ping") {
+      this.sendWs({ type: "pong", ts: data.ts || 0 });
+      return;
+    }
+    // 兼容服务端可能下发的 heartbeat 形式。
+    if (type === "heartbeat" && data.direction === "ping") {
+      this.sendWs({ type: "heartbeat", direction: "pong", ts: data.ts || 0 });
+      return;
+    }
+    if (type === "pong") return;
+
     // 增量推送：新增交易
     if (data.type === "tx_added") {
       this.handleTxAdded(data.tx, data.totals);
@@ -846,8 +884,22 @@ Page({
     if (data.type === "error") {
       // 如：订阅失败（你不在该房间中）
       this.toast(data.message || "同步失败");
-      if (data.code === "FORBIDDEN" || data.code === "UNAUTHORIZED") {
+      if (data.code === "FORBIDDEN") {
+        // 服务端明确判定不在该房间（被移出/房间已解散/映射丢失），清空视图是正确行为
         this.applyNoRoomState();
+      } else if (data.code === "UNAUTHORIZED") {
+        // 登录态过期：只清本地缓存，不清房间视图。
+        // 服务端发完 error 会关闭连接，onClose 的重连流程会重新登录并恢复订阅。
+        storage.setToken("");
+        storage.setOpenId("");
+        const app = getApp();
+        if (app && app.globalData) {
+          app.globalData.token = "";
+          app.globalData.openId = "";
+        }
+        log.warn("ws.unauthorized", "连接返回未授权，已清理本地登录态等待重连", {
+          roomCodeMasked: log.maskRoomCode(this.data.roomCode)
+        });
       }
     }
   },
@@ -915,13 +967,15 @@ Page({
         attempt: this._reconnectAttempt
       });
 
-      // 若期间用户已退出房间，则不再重连
+      // 若期间用户已退出房间，则不再重连。
+      // 注意：只有服务端“明确返回成功且不在房间”才清空视图；
+      // 请求失败(!me.ok，如刚从后台恢复时网络未就绪)不能当作已退房，否则会出现“未加入”假象。
       try {
         const app = getApp();
         const me = await app.loadMe();
         const roomCode = String(this.data.roomCode || "").trim().toUpperCase();
         const myRoomCode = String((me && me.roomCode) || "").trim().toUpperCase();
-        if (!me || !me.ok || !me.inRoom || myRoomCode !== roomCode) {
+        if (me && me.ok && (!me.inRoom || myRoomCode !== roomCode)) {
           this.applyNoRoomState();
           return;
         }
@@ -1159,13 +1213,145 @@ Page({
       return;
     }
 
+    // 默认打开单人付款（与旧版完全一致的界面）
+    const rows = this.buildPayRows();
+
+    // 每次打开弹层生成新的幂等令牌：重试同一次提交不会重复记账
+    this._payToken = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    this.setData(
+      {
+        showTransferModal: true,
+        payMultiMode: false,
+        paySingleOpenId: openId,
+        paySingleName: String(member.displayName || "成员"),
+        paySingleAvatar: String(member.avatarUrlResolved || resolveApiAssetUrl(member.avatarUrl) || ""),
+        paySingleAmountText: "",
+        payRows: rows
+      },
+      () => this.refreshPayState()
+    );
+  },
+
+  /**
+   * 构造「除自己外的全部成员」列表，供多人模式逐行填写。
+   *
+   * @returns {{openId:string, displayName:string, avatarUrl:string, amountText:string}[]}
+   */
+  buildPayRows() {
+    const me = String(this.data.meOpenId || "").trim();
+    return (this.data.members || [])
+      .filter((m) => m && m.active && String(m.openId || "") !== me)
+      .map((m) => ({
+        openId: String(m.openId || ""),
+        displayName: String(m.displayName || "成员"),
+        avatarUrl: String(m.avatarUrlResolved || resolveApiAssetUrl(m.avatarUrl) || ""),
+        amountText: ""
+      }));
+  },
+
+  /**
+   * 单人模式的金额输入。
+   * 同步写回 payRows，保证切换到多人模式时金额不丢。
+   *
+   * @param {any} e
+   */
+  handlePaySingleAmountInput(e) {
+    const text = toUnsignedIntText(e && e.detail && e.detail.value);
+    const openId = String(this.data.paySingleOpenId || "").trim();
+    const rows = (this.data.payRows || []).map((r) =>
+      r.openId === openId ? { ...r, amountText: text } : r
+    );
+    this.setData({ paySingleAmountText: text, payRows: rows }, () => this.refreshPayState());
+  },
+
+  /**
+   * 多人模式的逐行金额输入。
+   *
+   * @param {any} e
+   */
+  handlePayRowAmountInput(e) {
+    const openId = String((e && e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.openid) || "").trim();
+    const text = toUnsignedIntText(e && e.detail && e.detail.value);
+    if (!openId) return;
+
+    const rows = (this.data.payRows || []).map((r) =>
+      r.openId === openId ? { ...r, amountText: text } : r
+    );
+    const patch = { payRows: rows };
+    // 与单人模式保持同步，切回去不丢金额
+    if (openId === String(this.data.paySingleOpenId || "")) patch.paySingleAmountText = text;
+    this.setData(patch, () => this.refreshPayState());
+  },
+
+  /**
+   * 切到多人模式（金额沿用，不清空）。
+   */
+  handleSwitchToMulti() {
+    this.setData({ payMultiMode: true }, () => this.refreshPayState());
+  },
+
+  /**
+   * 切回单人模式。
+   */
+  handleSwitchToSingle() {
+    this.setData({ payMultiMode: false }, () => this.refreshPayState());
+  },
+
+  /**
+   * 同额填充：把第一个有金额的数值填到所有行。
+   * 对应“一炮三响，每家都输同一个数”的高频场景。
+   */
+  handleFillSameAmount() {
+    const rows = this.data.payRows || [];
+    const first = rows.find((r) => String(r.amountText || "").trim());
+    if (!first) {
+      this.toast("先填一个人的金额");
+      return;
+    }
+    const unit = String(first.amountText || "");
+    const next = rows.map((r) => ({ ...r, amountText: unit }));
+    const patch = { payRows: next };
+    if (String(this.data.paySingleOpenId || "")) patch.paySingleAmountText = unit;
+    this.setData(patch, () => this.refreshPayState());
+  },
+
+  /**
+   * 刷新可提交状态与合计文案。单人/多人两种模式分别计算。
+   */
+  refreshPayState() {
+    if (!this.data.payMultiMode) {
+      const amt = Number(this.data.paySingleAmountText);
+      const ok =
+        !!String(this.data.paySingleOpenId || "").trim() &&
+        Number.isInteger(amt) &&
+        amt >= CONST.AMOUNT_MIN &&
+        amt <= CONST.AMOUNT_MAX;
+      this.setData({ payCanSubmit: ok, payFilledCount: ok ? 1 : 0, paySummaryText: "" });
+      return;
+    }
+
+    let filled = 0;
+    let total = 0;
+    let ok = true;
+    for (const r of this.data.payRows || []) {
+      const raw = String(r.amountText || "").trim();
+      if (!raw) continue;
+      const amt = Number(raw);
+      if (!Number.isInteger(amt) || amt < CONST.AMOUNT_MIN || amt > CONST.AMOUNT_MAX) {
+        ok = false;
+        continue;
+      }
+      filled += 1;
+      total += amt;
+    }
+    if (filled === 0) ok = false;
+    if (total > CONST.AMOUNT_MAX) ok = false;
+
     this.setData({
-      showTransferModal: true,
-      transferToOpenId: openId,
-      transferToName: String(member.displayName || "成员"),
-      transferToAvatarUrl: String(member.avatarUrlResolved || resolveApiAssetUrl(member.avatarUrl) || ""),
-      transferAmountText: "",
-      transferCanSubmit: false
+      payCanSubmit: ok,
+      payFilledCount: filled,
+      paySummaryText: filled > 0 ? `已填 ${filled} 人 · 合计 ${total} 元` : "还没填金额"
     });
   },
 
@@ -1224,31 +1410,6 @@ Page({
   },
 
   /**
-   * 转账金额输入：仅允许整数（用于输入框回显）。
-   */
-  handleTransferAmountInput(e) {
-    const raw = e && e.detail && e.detail.value;
-    const transferAmountText = toUnsignedIntText(raw);
-    this.setData({ transferAmountText }, () => this.refreshTransferCanSubmit());
-  },
-
-  /**
-   * 刷新弹窗确认按钮可用状态。
-   */
-  refreshTransferCanSubmit() {
-    const toOpenId = String(this.data.transferToOpenId || "").trim();
-    const amount = Number(this.data.transferAmountText);
-
-    const ok =
-      !!toOpenId &&
-      Number.isInteger(amount) &&
-      amount >= CONST.AMOUNT_MIN &&
-      amount <= CONST.AMOUNT_MAX;
-
-    this.setData({ transferCanSubmit: ok });
-  },
-
-  /**
    * 关闭转账弹层。
    * 默认在提交中不允许用户手动关闭；仅内部流程可强制关闭。
    *
@@ -1257,84 +1418,121 @@ Page({
   closeTransferModal(options) {
     const force = !!(options && options.force);
     if (this.data.isTransferSubmitting && !force) return;
+    this._payToken = "";
     this.setData({
       showTransferModal: false,
-      transferToOpenId: "",
-      transferToName: "",
-      transferToAvatarUrl: "",
-      transferAmountText: "",
-      transferCanSubmit: false
+      payMultiMode: false,
+      paySingleOpenId: "",
+      paySingleName: "",
+      paySingleAvatar: "",
+      paySingleAmountText: "",
+      payRows: [],
+      payFilledCount: 0,
+      payCanSubmit: false,
+      paySummaryText: ""
     });
   },
 
   /**
-   * 确认转账：调用后端写入交易；成功后由 WS 推送刷新列表。
+   * 确认付款：支持一次付给多人（一炮双响/三响）。
+   * 提交给后端一批 targets，由后端在同一个事务里写入多条交易。
    */
-  async confirmTransfer() {
+  async confirmPay() {
     if (this.data.viewState !== "in_room") return;
-    if (!this.data.transferCanSubmit) return;
+    if (!this.data.payCanSubmit) return;
     if (this.data.isTransferSubmitting) return;
 
-    const toOpenId = String(this.data.transferToOpenId || "").trim();
-    const amount = Number(this.data.transferAmountText);
-    log.info("tx.submit.start", "开始提交转账", {
-      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
-      toOpenIdMasked: log.maskOpenId(toOpenId),
-      amount
-    });
-    const v = validateAmount(amount);
-    if (!v.ok) {
-      log.warn("tx.submit.invalid", "转账金额校验失败", {
-        roomCodeMasked: log.maskRoomCode(this.data.roomCode),
-        amount
-      });
-      this.toast(v.message);
+    // 单人：只取当前收款人；多人：取所有填了金额的行
+    let targets = [];
+    if (this.data.payMultiMode) {
+      targets = (this.data.payRows || [])
+        .filter((r) => String(r.amountText || "").trim())
+        .map((r) => ({ openId: String(r.openId || "").trim(), amount: Number(r.amountText), displayName: r.displayName }));
+    } else {
+      targets = [
+        {
+          openId: String(this.data.paySingleOpenId || "").trim(),
+          amount: Number(this.data.paySingleAmountText),
+          displayName: String(this.data.paySingleName || "")
+        }
+      ];
+    }
+
+    if (targets.length === 0) {
+      this.toast("请填写金额");
       return;
     }
 
-    // 转账提交仅禁用弹层按钮，不影响房间页其它交互。
+    // 逐条校验，提示到具体的人，避免只报“金额不合法”
+    for (let i = 0; i < targets.length; i += 1) {
+      const v = validateAmount(targets[i].amount);
+      if (!v.ok) {
+        const name = String(targets[i].displayName || "该成员");
+        this.toast(`${name}：${v.message}`);
+        return;
+      }
+    }
+
+    const totalAmount = targets.reduce((sum, t) => sum + t.amount, 0);
+    const clientToken = this._payToken || `pay_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    this._payToken = clientToken;
+
+    log.info("tx.submit.start", "开始提交付款", {
+      roomCodeMasked: log.maskRoomCode(this.data.roomCode),
+      targetCount: targets.length,
+      totalAmount
+    });
+
+    // 提交中仅禁用弹层按钮，不影响房间页其它交互。
     this.setData({ isTransferSubmitting: true });
     try {
       const app = getApp();
       const r = await app.apiCall({
         path: "/api/txs",
         method: "POST",
-        data: { toOpenId, amount: v.amount, note: "" }
+        data: {
+          // 只提交 openId / amount，displayName 仅用于前端提示
+          targets: targets.map((t) => ({ openId: t.openId, amount: t.amount })),
+          note: "",
+          clientToken
+        }
       });
       if (!r || !r.ok) {
-        log.warn("tx.submit.biz_fail", "转账业务失败", {
+        log.warn("tx.submit.biz_fail", "付款业务失败", {
           roomCodeMasked: log.maskRoomCode(this.data.roomCode),
           code: String((r && r.code) || ""),
           message: String((r && r.message) || "")
         });
-        this.toast((r && r.message) || "转账失败");
+        this.toast((r && r.message) || "付款失败");
         return;
       }
 
       this.closeTransferModal({ force: true });
-      // 优先依赖 WS 的 tx_added 增量推送，避免每次转账后整页快照刷新。
-      // 仅在 WS 未连接时兜底拉取一次快照，保证最终一致性。
+
+      // 单笔走 WS 增量推送；多笔后端推的是整页快照，这里只需在 WS 未连接时兜底拉一次。
       let usedSnapshotFallback = false;
       if (!this._socketOpen) {
         usedSnapshotFallback = true;
         await this.fetchSnapshot({ source: "http_tx_fallback" });
       }
 
-      log.info("tx.submit.success", "转账提交成功", {
+      log.info("tx.submit.success", "付款提交成功", {
         roomCodeMasked: log.maskRoomCode(this.data.roomCode),
-        toOpenIdMasked: log.maskOpenId(toOpenId),
-        amount,
+        targetCount: targets.length,
+        totalAmount,
+        groupId: String((r && r.groupId) || ""),
+        duplicated: !!r.duplicated,
         usedSnapshotFallback
       });
     } catch (err) {
-      console.error("transfer 失败", err);
-      log.error("tx.submit.fail", "转账提交失败", {
+      console.error("pay 失败", err);
+      log.error("tx.submit.fail", "付款提交失败", {
         roomCodeMasked: log.maskRoomCode(this.data.roomCode),
-        toOpenIdMasked: log.maskOpenId(toOpenId),
-        amount,
+        targetCount: targets.length,
+        totalAmount,
         errMsg: String((err && err.message) || err || "")
       });
-      this.toast("转账失败，请稍后重试");
+      this.toast("付款失败，请稍后重试");
     } finally {
       this.setData({ isTransferSubmitting: false });
     }
@@ -1387,8 +1585,12 @@ Page({
         return;
       }
 
+      // 服务端告知小程序码是否可用；不可用时返回的是「入房二维码」，只能在小程序内扫。
+      // 老服务端没有这个字段，按可用处理，保持向后兼容。
+      const minicodeAvailable = !(r && r.joinCode && r.joinCode.minicodeAvailable === false);
       this.setData({
         joinCodeUrl: resolveApiAssetUrl(minicodeUrl),
+        joinCodeIsMini: minicodeAvailable,
         joinCodeLoadError: false
       });
     } catch (err) {

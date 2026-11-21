@@ -1,10 +1,25 @@
 /**
  * 个人资料页：
- * - 展示微信头像/昵称
- * - 允许仅修改 displayName（展示昵称）
+ * - 展示头像/昵称，并给出一眼可见的当前环境标识
+ * - 一次性完成头像 + 昵称设置（与首页保持同一套交互）
+ * - 已完成后仅修改展示昵称
+ * - 提供账号注销入口（低频操作从首页移到这里）
  */
 const { resolveApiAssetUrl } = require("../../utils/url");
 const CONST = require("../../utils/const");
+const storage = require("../../utils/storage");
+const log = require("../../utils/log");
+const { getEnvInfo, extractDevIdentity } = require("../../utils/env");
+
+/**
+ * 生成默认昵称，避免用户必须手打才能完成设置。
+ *
+ * @returns {string}
+ */
+function buildDefaultNickname() {
+  const n = Math.floor(1000 + Math.random() * 9000);
+  return `玩家${n}`;
+}
 
 Page({
   data: {
@@ -13,20 +28,37 @@ Page({
     user: null,
     userAvatarUrl: "",
     displayNameInput: "",
-    showProfileModal: false,
 
-    // 与首页一致：支持 chooseAvatar + nickname 授权链路
+    // 当前环境
+    envLabel: "",
+    envTone: "",
+    envDetail: "",
+
+    // 开发环境下的虚拟账号（不同设备默认是不同账号）
+    devSwitchable: false,
+    devIdentity: "",
+
+    // 一步式资料设置
     supportChooseAvatar: false,
     draftAvatarLocal: "",
     draftAvatarPath: "",
     draftDisplayName: "",
-    canSaveProfile: false
+    canSaveProfile: false,
+    avatarUploading: false
   },
 
   onLoad() {
     const supportChooseAvatar =
       !!wx.canIUse && wx.canIUse("button.open-type.chooseAvatar") && wx.canIUse("input.type.nickname");
-    this.setData({ supportChooseAvatar });
+    const env = getEnvInfo();
+    this.setData({
+      supportChooseAvatar,
+      envLabel: env.label,
+      envTone: env.tone,
+      envDetail: env.detail,
+      devSwitchable: !!CONST.DEV_MOCK_LOGIN,
+      draftDisplayName: supportChooseAvatar ? buildDefaultNickname() : ""
+    });
   },
 
   onShow() {
@@ -43,12 +75,18 @@ Page({
       const me = await app.loadMe();
       const user = (me && me.user) || null;
       const hasProfile = !!(user && user.displayName && user.avatarUrlWx);
-      this.setData({
+      const patch = {
         hasProfile,
         user,
         userAvatarUrl: resolveApiAssetUrl(user && user.avatarUrlWx),
-        displayNameInput: (user && user.displayName) || ""
-      });
+        displayNameInput: (user && user.displayName) || "",
+        envDetail: getEnvInfo().detail,
+        devIdentity: extractDevIdentity(me && me.openId)
+      };
+      if (!hasProfile && !String(this.data.draftDisplayName || "").trim()) {
+        patch.draftDisplayName = this.data.supportChooseAvatar ? buildDefaultNickname() : "";
+      }
+      this.setData(patch);
     } catch (err) {
       console.error("loadProfile 失败", err);
     } finally {
@@ -62,35 +100,13 @@ Page({
   },
 
   /**
-   * 刷新授权弹窗“保存并授权”按钮可用状态。
+   * 刷新“完成”按钮可用状态。
    */
   refreshCanSaveProfile() {
     const name = String(this.data.draftDisplayName || "").trim();
     const avatarPath = String(this.data.draftAvatarPath || "").trim();
     const ok = !!name && name.length <= 20 && !!avatarPath;
     this.setData({ canSaveProfile: ok });
-  },
-
-  /**
-   * 打开授权弹窗（与首页保持一致的授权流程）。
-   */
-  handleOpenProfileModal() {
-    if (this.data.loading) return;
-    this.setData({
-      showProfileModal: true,
-      draftAvatarLocal: "",
-      draftAvatarPath: "",
-      draftDisplayName: "",
-      canSaveProfile: false
-    });
-  },
-
-  /**
-   * 关闭授权弹窗。上传/保存进行中不允许关闭，避免流程中断。
-   */
-  handleCloseProfileModal() {
-    if (this.data.loading) return;
-    this.setData({ showProfileModal: false });
   },
 
   /**
@@ -105,7 +121,8 @@ Page({
     this.setData(
       {
         draftAvatarLocal: local,
-        draftAvatarPath: ""
+        draftAvatarPath: "",
+        avatarUploading: true
       },
       () => this.refreshCanSaveProfile()
     );
@@ -149,8 +166,12 @@ Page({
       );
     } catch (err) {
       console.error("profile handleChooseAvatar 失败", err);
+      log.error("avatar.upload.fail", "头像上传失败", {
+        errMsg: String((err && err.message) || err || "")
+      });
       wx.showToast({ title: "头像上传失败，请稍后重试", icon: "none" });
     } finally {
+      this.setData({ avatarUploading: false });
       if (!wasLoading) this.setData({ loading: false });
     }
   },
@@ -166,7 +187,7 @@ Page({
   },
 
   /**
-   * 弹窗内保存授权资料，成功后立即跳首页。
+   * 保存头像 + 昵称，成功后清空草稿并刷新本页。
    */
   async handleSaveAuthProfile() {
     if (!this.data.canSaveProfile) return;
@@ -190,11 +211,13 @@ Page({
       }
 
       await app.loadMe();
-      this.setData({ showProfileModal: false });
-      wx.switchTab({
-        url: "/pages/home/home",
-        fail: () => wx.reLaunch({ url: "/pages/home/home" })
+      this.setData({
+        draftAvatarLocal: "",
+        draftAvatarPath: "",
+        canSaveProfile: false
       });
+      wx.showToast({ title: "已保存", icon: "success" });
+      await this.loadProfile();
     } catch (err) {
       console.error("profile handleSaveAuthProfile 失败", err);
       wx.showToast({ title: "保存资料失败，请稍后重试", icon: "none" });
@@ -235,19 +258,13 @@ Page({
       }
 
       await app.loadMe();
-      this.setData({ showProfileModal: false });
-      wx.switchTab({
-        url: "/pages/home/home",
-        fail: () => wx.reLaunch({ url: "/pages/home/home" })
-      });
+      await this.loadProfile();
     } catch (err) {
       // 用户取消授权属于正常分支，静默处理
     } finally {
       this.setData({ loading: false });
     }
   },
-
-  noop() {},
 
   async handleSave() {
     if (this.data.loading) return;
@@ -290,9 +307,103 @@ Page({
   },
 
   /**
-   * 兼容入口：未授权时在当前页打开授权弹窗。
+   * 切换开发账号（仅 develop 环境）。
+   *
+   * 背景：develop 环境跳过了 wx.login，每个客户端实例会生成一个独立的虚拟账号，
+   * 所以「开发者工具建了房间、手机上看不到」是正常的——它们是两个账号。
+   * 这里允许手动指定标识：同一个标识 = 同一个账号，方便跨设备对齐或构造多人场景。
    */
-  handleAuth() {
-    this.handleOpenProfileModal();
+  async handleSwitchDevAccount() {
+    if (!CONST.DEV_MOCK_LOGIN) return;
+
+    const current = String(storage.getDevUserTag() || this.data.devIdentity || "").trim();
+    const res = await new Promise((resolve) => {
+      wx.showModal({
+        title: "切换开发账号",
+        editable: true,
+        placeholderText: "留空 = 随机生成新账号",
+        content: current,
+        confirmText: "切换",
+        cancelText: "取消",
+        success: resolve,
+        fail: () => resolve({ confirm: false })
+      });
+    });
+    if (!res || !res.confirm) return;
+
+    const input = String(res.content || "").trim().toLowerCase();
+    if (input && !/^[a-z0-9_-]{1,16}$/.test(input)) {
+      wx.showToast({ title: "只能用 1-16 位小写字母/数字", icon: "none" });
+      return;
+    }
+
+    if (input) storage.setDevUserTag(input);
+    else storage.clearDevUserTag();
+
+    // 清掉登录态，强制重新走一次开发旁路登录
+    storage.setToken("");
+    storage.setOpenId("");
+    const app = getApp();
+    if (app && app.globalData) {
+      app.globalData.token = "";
+      app.globalData.openId = "";
+      app.globalData.user = null;
+    }
+
+    wx.showToast({ title: "已切换账号", icon: "success", duration: 900 });
+    setTimeout(() => {
+      wx.reLaunch({ url: "/pages/home/home" });
+    }, 900);
+  },
+
+  /**
+   * 注销账号：低频且不可逆的操作，放在「我的」页，避免占首页版面。
+   */
+  async handleLogout() {
+    const res = await new Promise((resolve) => {
+      wx.showModal({
+        title: "确认注销",
+        content: "注销后需要重新授权登录，确定要退出吗？",
+        confirmText: "确定",
+        confirmColor: "#C93B2E",
+        cancelText: "取消",
+        success: resolve,
+        fail: () => resolve({ confirm: false })
+      });
+    });
+    if (!res || !res.confirm) return;
+
+    wx.showLoading({ title: "注销中...", mask: true });
+    try {
+      const app = getApp();
+      const deactivateRes = await app.apiCall({
+        path: "/api/auth/deactivate",
+        method: "POST"
+      });
+
+      if (!deactivateRes || !deactivateRes.ok) {
+        wx.hideLoading();
+        wx.showToast({
+          title: (deactivateRes && deactivateRes.message) || "注销失败",
+          icon: "none"
+        });
+        return;
+      }
+
+      app.globalData.token = "";
+      app.globalData.openId = "";
+      app.globalData.user = null;
+      storage.setToken("");
+      storage.setOpenId("");
+
+      wx.hideLoading();
+      wx.showToast({ title: "已注销账号", icon: "success", duration: 1200 });
+      setTimeout(() => {
+        wx.reLaunch({ url: "/pages/home/home" });
+      }, 1200);
+    } catch (err) {
+      wx.hideLoading();
+      wx.showToast({ title: (err && err.message) || "注销失败", icon: "none" });
+    }
   }
 });

@@ -1,7 +1,11 @@
 const api = require("./utils/api");
+const CONST = require("./utils/const");
 const log = require("./utils/log");
 const storage = require("./utils/storage");
 const { validateRoomCode } = require("./utils/validator");
+
+// 本地开发登录旁路的固定 code，需与服务端 DEV_MOCK_LOGIN_CODE 保持一致。
+const DEV_MOCK_LOGIN_CODE = "DEV_MOCK_LOGIN";
 
 /**
  * 安全解码：避免非法编码导致 decodeURIComponent 抛错。
@@ -167,22 +171,35 @@ App({
       return { token: cachedToken, openId: cachedOpenId };
     }
 
-    // 走 wx.login 换取 code（不涉及用户授权）
-    log.info("session.wx_login.start", "开始调用 wx.login");
-    const loginRes = await new Promise((resolve, reject) => {
-      wx.login({
-        success: resolve,
-        fail: (err) => {
-          log.warn("session.wx_login.fail", "wx.login 调用失败", {
-            errMsg: String((err && err.errMsg) || "")
-          });
-          reject(err);
-        }
+    // 取登录 code：本地开发环境下可跳过 wx.login，走服务端开发登录旁路，
+    // 这样在没配置微信 AppSecret 时也能完整调试业务功能。
+    let code = "";
+    if (CONST.DEV_MOCK_LOGIN) {
+      // 每个客户端实例一个稳定身份标识：同一实例始终是同一用户，不同实例互不相同，
+      // 便于在本地同时模拟「房主 + 多个成员」。
+      const devTag = storage.ensureDevUserTag();
+      code = `${DEV_MOCK_LOGIN_CODE}:${devTag}`;
+      log.warn("session.dev_login", "本地开发登录旁路已启用，跳过 wx.login", {
+        devTag
       });
-    });
-    log.info("session.wx_login.end", "wx.login 调用完成");
+    } else {
+      // 走 wx.login 换取 code（不涉及用户授权）
+      log.info("session.wx_login.start", "开始调用 wx.login");
+      const loginRes = await new Promise((resolve, reject) => {
+        wx.login({
+          success: resolve,
+          fail: (err) => {
+            log.warn("session.wx_login.fail", "wx.login 调用失败", {
+              errMsg: String((err && err.errMsg) || "")
+            });
+            reject(err);
+          }
+        });
+      });
+      log.info("session.wx_login.end", "wx.login 调用完成");
+      code = String((loginRes && loginRes.code) || "").trim();
+    }
 
-    const code = String((loginRes && loginRes.code) || "").trim();
     if (!code) throw new Error("wx.login 未返回 code");
 
     const r = await api.request({

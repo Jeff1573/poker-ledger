@@ -4,7 +4,25 @@
  * 目标：用最轻依赖把现有 JSON 数据结构落到关系型表结构，并保持对外 API 行为不变。
  */
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+
+/**
+ * 给已有表补列（幂等）。SQLite 没有 ADD COLUMN IF NOT EXISTS，需要先查表结构。
+ *
+ * @param {import("better-sqlite3").Database} db
+ * @param {string} table
+ * @param {string} column
+ * @param {string} ddlRest - 列类型及默认值，如 "TEXT NOT NULL DEFAULT ''"
+ */
+function ensureColumn(db, table, column, ddlRest) {
+  const exists = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((c) => String((c && c.name) || "") === column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddlRest};`);
+  }
+}
 
 /**
  * 初始化/升级 schema（当前包含 v1/v2 结构）。
@@ -125,6 +143,16 @@ function initSchema(db) {
       "CREATE INDEX IF NOT EXISTS idx_settlements_dissolvedAt_roomCode ON settlements(dissolvedAt, roomCode);\n" +
       "CREATE INDEX IF NOT EXISTS idx_settlement_members_openId_roomCode ON settlement_members(openId, roomCode);\n" +
       "CREATE INDEX IF NOT EXISTS idx_leaderboard_lastSettlementAt ON leaderboard_stats(lastSettlementAt);\n"
+  );
+
+  // v3：支持「一次付款给多人」（一炮双响/三响）。
+  // - groupId：同一次批量转账生成的多条记录共用，便于列表折叠展示
+  // - clientToken：客户端提交令牌，用于幂等去重（弱网重试不会记出两批账）
+  ensureColumn(db, "room_txs", "groupId", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "room_txs", "clientToken", "TEXT NOT NULL DEFAULT ''");
+  // 同一房间内 clientToken 唯一；历史数据为空串，用部分索引跳过
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_txs_room_token ON room_txs(roomCode, clientToken) WHERE clientToken <> '';\n"
   );
 
   // 标记 schema 版本（便于后续升级）。

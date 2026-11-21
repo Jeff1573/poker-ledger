@@ -1,92 +1,99 @@
 <view class="profile-page">
   <view class="container profile-container">
+    <!-- 环境标识：和首页保持一致，便于随时确认连的是哪个后端 -->
+    <view class="env-row">
+      <view class="env-pill env-pill--{{envTone}}">
+        <view class="env-dot"></view>
+        <text class="env-text">{{envLabel}}</text>
+      </view>
+      <text class="env-host">{{envDetail}}</text>
+    </view>
+
+    <!-- 开发账号：develop 下每台设备默认是不同账号，这里可以对齐成同一个 -->
+    <view wx:if="{{devSwitchable}}" class="dev-row">
+      <view class="dev-info">
+        <view class="dev-title">当前开发账号：{{devIdentity || '加载中'}}</view>
+        <view class="dev-hint">开发环境下每台设备默认是不同的虚拟账号</view>
+      </view>
+      <button class="btn-plain dev-switch" size="mini" bindtap="handleSwitchDevAccount" disabled="{{loading}}">
+        切换
+      </button>
+    </view>
+
     <view class="card">
-      <view class="title">我的资料</view>
-      <view class="subtle" style="margin-top: 10rpx;">默认使用微信头像昵称，可修改展示昵称</view>
-
-      <view wx:if="{{hasProfile}}" class="row profile-row" style="margin-top: 22rpx;">
-        <image class="avatar" src="{{userAvatarUrl}}" mode="aspectFill" />
-        <view style="margin-left: 18rpx;">
-          <view class="name">{{user.displayName}}</view>
-          <view class="subtle">微信昵称：{{user.nickNameWx}}</view>
+      <block wx:if="{{hasProfile}}">
+        <view class="identity-row">
+          <user-avatar class="identity-avatar" src="{{userAvatarUrl}}" name="{{user.displayName}}" size="{{104}}" bordered="{{true}}" />
+          <view class="identity-main">
+            <view class="identity-name">{{user.displayName}}</view>
+            <view class="subtle">微信昵称：{{user.nickNameWx || '未获取'}}</view>
+          </view>
         </view>
-      </view>
+      </block>
 
-      <view wx:else class="row-between" style="margin-top: 22rpx;">
-        <view>
-          <view class="name">尚未授权</view>
-          <view class="subtle">请先授权获取头像昵称</view>
+      <block wx:else>
+        <view class="identity-title">设置头像和昵称</view>
+        <view class="identity-hint">只设置一次，用于房间里区分是谁的账</view>
+
+        <view class="setup-row">
+          <button
+            class="avatar-trigger"
+            open-type="chooseAvatar"
+            bindchooseavatar="handleChooseAvatar"
+            disabled="{{loading}}"
+          >
+            <user-avatar src="{{draftAvatarLocal}}" name="{{draftDisplayName}}" size="{{112}}" bordered="{{true}}" />
+            <view class="avatar-trigger-text">{{draftAvatarPath ? '已选好' : (avatarUploading ? '上传中' : '选头像')}}</view>
+          </button>
+
+          <view class="setup-fields">
+            <input
+              class="input setup-input"
+              type="nickname"
+              placeholder="输入昵称"
+              value="{{draftDisplayName}}"
+              bindinput="handleNicknameInput"
+              maxlength="20"
+              disabled="{{loading}}"
+            />
+            <view class="setup-tip">昵称可直接用默认值，也能改成自己的</view>
+          </view>
         </view>
-        <button class="btn-primary" bindtap="handleOpenProfileModal" disabled="{{loading}}">去授权</button>
-      </view>
+
+        <button
+          wx:if="{{supportChooseAvatar}}"
+          class="btn-primary setup-save"
+          bindtap="handleSaveAuthProfile"
+          disabled="{{!canSaveProfile || loading}}"
+        >
+          完成
+        </button>
+        <button wx:else class="btn-primary setup-save" bindtap="handleAuthLegacy" disabled="{{loading}}">
+          使用微信授权获取
+        </button>
+      </block>
     </view>
 
     <view class="card" wx:if="{{hasProfile}}">
-      <view class="title">修改昵称</view>
+      <view class="section-title">修改昵称</view>
       <input
         class="input"
         placeholder="请输入新昵称"
         value="{{displayNameInput}}"
         bindinput="handleDisplayNameInput"
         maxlength="20"
-        style="margin-top: 18rpx;"
+        style="margin-top: 16rpx;"
       />
-      <button class="btn-primary" style="margin-top: 18rpx;" bindtap="handleSave" disabled="{{loading}}">
+      <button class="btn-primary" style="margin-top: 16rpx;" bindtap="handleSave" disabled="{{loading}}">
         保存
       </button>
     </view>
-  </view>
-</view>
 
-<!-- 资料授权弹窗：与首页授权流程保持一致 -->
-<view wx:if="{{showProfileModal}}" class="overlay" bindtap="handleCloseProfileModal">
-  <view class="overlay-card profile-modal-card" catchtap="noop">
-    <view class="title">完善资料</view>
-    <view class="subtle" style="margin-top: 10rpx;">用于房间内展示头像和昵称，完成后即可创建或加入房间</view>
-
-    <view wx:if="{{supportChooseAvatar}}">
-      <view class="row profile-modal-avatar-row">
-        <image class="avatar" src="{{draftAvatarLocal}}" mode="aspectFill" />
-        <button class="btn-plain auth-btn" open-type="chooseAvatar" bindchooseavatar="handleChooseAvatar" disabled="{{loading}}">
-          选择头像
-        </button>
-      </view>
-
-      <input
-        class="input"
-        type="nickname"
-        placeholder="请输入昵称"
-        value="{{draftDisplayName}}"
-        bindinput="handleNicknameInput"
-        maxlength="20"
-        style="margin-top: 14rpx;"
-      />
-
-      <view class="row profile-modal-actions">
-        <button class="btn-plain" style="flex: 1;" bindtap="handleCloseProfileModal" disabled="{{loading}}">
-          取消
-        </button>
-        <button
-          class="btn-primary"
-          style="flex: 1; margin-left: 14rpx;"
-          bindtap="handleSaveAuthProfile"
-          disabled="{{!canSaveProfile || loading}}"
-        >
-          保存并授权
-        </button>
-      </view>
-    </view>
-
-    <view wx:else>
-      <view class="subtle" style="margin-top: 18rpx;">当前设备不支持直接选择头像，请使用授权方式获取资料。</view>
-      <view class="row profile-modal-actions">
-        <button class="btn-plain" style="flex: 1;" bindtap="handleCloseProfileModal" disabled="{{loading}}">
-          取消
-        </button>
-        <button class="btn-primary" style="flex: 1; margin-left: 14rpx;" bindtap="handleAuthLegacy" disabled="{{loading}}">
-          授权获取
-        </button>
-      </view>
+    <view wx:if="{{hasProfile}}" class="danger-zone">
+      <button class="btn-danger logout-btn" bindtap="handleLogout" disabled="{{loading}}">
+        注销账号
+      </button>
+      <view class="danger-tip">注销后需要重新授权，历史战绩会保留</view>
     </view>
   </view>
 </view>

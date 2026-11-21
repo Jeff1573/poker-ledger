@@ -44,8 +44,11 @@
     <block wx:else>
       <view class="row-between">
         <view>
-          <view class="title" wx:if="{{viewState === 'in_room'}}">房间 {{roomCode}}</view>
-          <view class="title" wx:else>房间 --</view>
+          <view class="room-title-row">
+            <view class="title" wx:if="{{viewState === 'in_room'}}">房间 {{roomCode}}</view>
+            <view class="title" wx:else>房间 --</view>
+            <view class="env-pill env-pill--{{envTone}} room-env-pill">{{envLabel}}</view>
+          </view>
           <view class="subtle" style="margin-top: 10rpx;" wx:if="{{viewState === 'in_room'}}">角色：{{roleText}}</view>
           <view class="subtle" style="margin-top: 10rpx;" wx:else>角色：未加入</view>
           <view class="subtle room-refresh-tip" wx:if="{{viewState === 'in_room' && isRefreshing}}">
@@ -104,7 +107,7 @@
           bindlongpress="handleLongPressMember"
           data-openid="{{item.openId}}"
         >
-          <image class="member-avatar" src="{{item.avatarUrlResolved}}" mode="aspectFill" />
+          <user-avatar class="member-avatar" src="{{item.avatarUrlResolved}}" name="{{item.displayName}}" size="{{100}}" />
           <view class="member-name">{{item.displayName}}</view>
           <view class="member-amount {{item.amount > 0 ? 'plus' : (item.amount < 0 ? 'minus' : 'zero')}}">
             {{item.amountText || '0'}}
@@ -144,10 +147,10 @@
         <view wx:for="{{txRows}}" wx:key="id" class="tx-item row-between">
           <view class="tx-body">
             <view class="tx-main">
-              <image class="tx-inline-avatar" src="{{item.fromAvatarResolved}}" mode="aspectFill" />
+              <user-avatar class="tx-inline-avatar" src="{{item.fromAvatarResolved}}" name="{{item.fromName}}" size="{{44}}" />
               <text class="tx-name">{{item.fromName}}</text>
               <text class="tx-arrow"> → </text>
-              <image class="tx-inline-avatar" src="{{item.toAvatarResolved}}" mode="aspectFill" />
+              <user-avatar class="tx-inline-avatar" src="{{item.toAvatarResolved}}" name="{{item.toName}}" size="{{44}}" />
               <text class="tx-name">{{item.toName}}</text>
             </view>
             <view class="subtle">{{item.timeText}}</view>
@@ -174,12 +177,16 @@
       binderror="handleJoinCodeImageError"
       bindload="handleJoinCodeImageLoad"
     />
+    <!-- 房间号始终明文给出：即使二维码扫不出来也能口头/手输 -->
+    <view class="join-code-number">房间号 {{roomCode}}</view>
     <view class="subtle join-code-tip" wx:if="{{!joinCodeLoadError}}">
-      长按图片可发送给朋友，好友识别后可加入当前房间。
+      <block wx:if="{{joinCodeIsMini}}">长按图片可发送给朋友，好友识别后即可加入。</block>
+      <block wx:else>请让好友在小程序里点「扫码加入」扫这张图；微信「扫一扫」打不开，也可直接输入房间号。</block>
     </view>
     <view class="subtle join-code-tip join-code-tip-error" wx:else>
-      邀请码图加载失败，请稍后重试。
+      邀请码图加载失败，请直接让好友输入房间号加入。
     </view>
+
     <button class="btn-primary" style="margin-top: 16rpx;" bindtap="closeJoinCode">关闭</button>
   </view>
 </view>
@@ -198,39 +205,74 @@
   </view>
 </view>
 
-<!-- 转账弹层 -->
+<!-- 付款弹层：默认单人（与旧版一致），可切到多人一次付给多位 -->
 <view wx:if="{{viewState === 'in_room' && showTransferModal}}" class="overlay" bindtap="closeTransferModal">
-  <view class="overlay-card" catchtap="noop">
-    <view class="title">转账</view>
-
-    <view class="row" style="margin-top: 18rpx;">
-      <image class="tx-avatar" src="{{transferToAvatarUrl}}" mode="aspectFill" />
-      <view style="margin-left: 14rpx;">
-        <view class="transfer-name">转给 {{transferToName}}</view>
-        <view class="subtle">金额仅支持整数</view>
+  <view class="overlay-card pay-card" catchtap="noop">
+    <view class="row-between pay-head">
+      <view class="title">付款</view>
+      <view class="pay-mode-switch {{payMultiMode ? 'is-multi' : ''}}">
+        <view class="pay-mode-thumb"></view>
+        <view class="pay-mode-item {{!payMultiMode ? 'active' : ''}}" bindtap="handleSwitchToSingle">个人</view>
+        <view class="pay-mode-item {{payMultiMode ? 'active' : ''}}" bindtap="handleSwitchToMulti">多人</view>
       </view>
     </view>
 
-    <input
-      class="input"
-      type="number"
-      placeholder="请输入金额"
-      value="{{transferAmountText}}"
-      bindinput="handleTransferAmountInput"
-      maxlength="9"
-      style="margin-top: 18rpx;"
-      focus="{{showTransferModal}}"
-    />
+    <!-- 单人：经典版式 -->
+    <block wx:if="{{!payMultiMode}}">
+      <view class="pay-single-row">
+        <user-avatar class="pay-single-avatar" src="{{paySingleAvatar}}" name="{{paySingleName}}" size="{{88}}" />
+        <view class="pay-single-main">
+          <view class="pay-single-name">转给 {{paySingleName}}</view>
+          <view class="subtle">金额仅支持整数</view>
+        </view>
+      </view>
 
-    <view class="row-between" style="margin-top: 18rpx;">
-      <button class="btn-plain" style="flex: 1;" bindtap="closeTransferModal" disabled="{{isTransferSubmitting}}">取消</button>
+      <input
+        class="input pay-single-input"
+        type="number"
+        placeholder="请输入金额"
+        value="{{paySingleAmountText}}"
+        bindinput="handlePaySingleAmountInput"
+        maxlength="9"
+        focus="{{showTransferModal && !payMultiMode}}"
+      />
+    </block>
+
+    <!-- 多人：全员列表，名称 + 金额一行，填了才算 -->
+    <block wx:else>
+      <scroll-view class="pay-list" scroll-y>
+        <view wx:for="{{payRows}}" wx:key="openId" class="pay-item">
+          <user-avatar class="pay-item-avatar" src="{{item.avatarUrl}}" name="{{item.displayName}}" size="{{60}}" />
+          <view class="pay-item-name">{{item.displayName}}</view>
+          <input
+            class="input pay-item-input"
+            type="number"
+            placeholder="0"
+            value="{{item.amountText}}"
+            bindinput="handlePayRowAmountInput"
+            data-openid="{{item.openId}}"
+            maxlength="9"
+          />
+        </view>
+      </scroll-view>
+
+      <view class="row-between pay-summary">
+        <view class="subtle">{{paySummaryText}}</view>
+        <view wx:if="{{payFilledCount > 1}}" class="pay-fill" bindtap="handleFillSameAmount">同额填充</view>
+      </view>
+    </block>
+
+    <view class="row pay-actions">
+      <button class="btn-plain" style="flex: 1;" bindtap="closeTransferModal" disabled="{{isTransferSubmitting}}">
+        取消
+      </button>
       <button
         class="btn-primary"
         style="flex: 1; margin-left: 14rpx;"
-        bindtap="confirmTransfer"
-        disabled="{{isTransferSubmitting || !transferCanSubmit}}"
+        bindtap="confirmPay"
+        disabled="{{isTransferSubmitting || !payCanSubmit}}"
       >
-        确认
+        确认付款
       </button>
     </view>
   </view>
